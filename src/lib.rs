@@ -32,6 +32,13 @@ struct RosieString<'a> {
 }
 
 impl RosieString<'_> {
+    fn manual_drop(&mut self) {
+        if self.ptr != ptr::null() {
+            unsafe { rosie_free_string(*self); }
+            self.len = 0;
+            self.ptr = ptr::null();
+        }
+    }
     fn empty() -> Self {
         Self {
             len: 0,
@@ -51,7 +58,7 @@ impl RosieString<'_> {
         }
     }
     fn len(&self) -> usize {
-        self.len as usize
+        usize::try_from(self.len).unwrap()
     }
 }
 
@@ -61,9 +68,7 @@ pub struct RosieMessage(RosieString<'static>);
 //If it's the owned variant, we are responsible for freeing any string buffers, even if librosie allocated them
 impl Drop for RosieMessage {
     fn drop(&mut self) {
-        if self.0.ptr != ptr::null() {
-            unsafe { rosie_free_string(self.0); }
-        }
+        self.0.manual_drop();
     }
 }
 
@@ -132,7 +137,10 @@ impl RosieEngine<'_> {
         let rosie_engine = unsafe { rosie_new(&mut message_buf) };
 
         if let Some(result_message) = messages {
+            result_message.0.manual_drop(); //We're overwriting the string that was there
             result_message.0 = message_buf;
+        } else {
+            message_buf.manual_drop();
         }
 
         if rosie_engine.e as *const _ != ptr::null() {
@@ -202,14 +210,19 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
+    //QUESTION: Does it make sense to parse this json into a structure that's easier to query?  The API client can parse
+    //it easily enough, so probably better to keep the crate dependencies lower.
+    //NOTE: I've got a dependency on Serde JSON anyway, in order to parse match results.  However, I hope to remove that soon.
     pub fn get_config_as_json(&self) -> Result<RosieMessage, RosieError> {
 
-        let mut message_buf = RosieString::empty();
+        let mut config_buf = RosieString::empty();
 
-        let result_code = unsafe { rosie_config(self.copy_self(), &mut message_buf) };
+        let result_code = unsafe { rosie_config(self.copy_self(), &mut config_buf) };
+
+        let config_message = RosieMessage(config_buf);
 
         if result_code == 0 {
-            Ok(RosieMessage(message_buf))
+            Ok(config_message)
         } else {
             Err(RosieError::from(result_code))
         }
@@ -227,7 +240,10 @@ impl RosieEngine<'_> {
         let result_code = unsafe { rosie_compile(self.copy_self(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
 
         if let Some(result_message) = messages {
+            result_message.0.manual_drop(); //We're overwriting the string that was there
             result_message.0 = message_buf;
+        } else {
+            message_buf.manual_drop();
         }
         
         //QUESTION FOR A ROSIE EXPERT.  There appears to a bug in the implementation of rosie_compile.
@@ -252,11 +268,11 @@ impl RosieEngine<'_> {
         }
     }
 
-    //QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the input string.
-    //Is this right?  Therefore, the engine could be safely deallocated and the match buffer would still be fine, but if the input
-    //string's buffer were deallocated then the match result would point to freed memory?  Is this right, or is the memory actuall
-    //owned by the engine, and I need to make sure the engine isn't deallocated before the match result?
-    pub fn match_pattern<'input>(&mut self, pattern_id : PatternID, start : usize, input : &'input str) -> Result<RosieMatchResult<'input>, RosieError> {
+    //QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the engine.
+    //Is this right?  Therefore, the input string could be safely deallocated and the match buffer would still be fine, but if
+    //the engine were deallocated then the match result would point to freed memory?  Is this right, or do I need to make sure
+    //the input string's buffer isn't deallocated while the match result is still in use?
+    pub fn match_pattern<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str) -> Result<RosieMatchResult<'engine>, RosieError> {
         
         //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
         //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
@@ -300,6 +316,8 @@ impl RosieEngine<'_> {
 
         let mut matched : i32 = -1;
 
+        trace.0.manual_drop(); //We'll be overwriting whatever string was already there
+
         //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
         let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, start as i32, "condensed\0".as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
 
@@ -310,6 +328,35 @@ impl RosieEngine<'_> {
                 Ok(false)
             }
         } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+    //QUESTION FOR A ROSIE EXPERT: the code for rosie_loadfile says "N.B. Client must free 'messages' ", but it makes no mention of
+    //pkgname.  However, looking inside the function implementation, it appears that pkgname is allocated with rosie_new_string, and
+    //not retained inside the engine, therefore, it appears that the caller is also responsible for deallocating 'pkgname'.  Did I
+    //miss something?
+    pub fn load_rpl_file(&mut self, file_name : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
+
+        let file_name_rosie_string = RosieString::from_str(file_name);
+        let mut pkg_name = RosieString::empty();
+        let mut message_buf = RosieString::empty();
+        let mut ok : i32 = 0;
+
+        let result_code = unsafe { rosie_loadfile(self.copy_self(), &mut ok, &file_name_rosie_string, &mut pkg_name, &mut message_buf) };
+
+        if let Some(result_message) = messages {
+            result_message.0.manual_drop(); //We're overwriting the string that was there
+            result_message.0 = message_buf;
+        } else {
+            message_buf.manual_drop();
+        }
+
+        //QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
+        //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
+        if result_code == 0 && pkg_name.len() > 0 && ok > 0 {
+            Ok(RosieMessage(pkg_name))
+        } else {
+            pkg_name.manual_drop();
             Err(RosieError::from(result_code))
         }
     }
@@ -337,6 +384,15 @@ impl RosieMatchResult<'_> {
             ttotal: 0,
             tmatch: 0
         }
+    }
+    pub fn as_str(&self) -> &str {
+        self.data.as_str()
+    }
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+    pub fn leftover(&self) -> usize {
+        usize::try_from(self.leftover).unwrap()
     }
 }
 
@@ -367,7 +423,7 @@ extern "C" {
     //            str *err);
     fn rosie_trace(engine : RosieEngine, pat : i32, start : i32, trace_style : *const u8, input : *const RosieString, matched : &mut i32, trace : *mut RosieString) -> i32; // int rosie_trace(Engine *e, int pat, int start, char *trace_style, str *input, int *matched, str *trace);
     // int rosie_load(Engine *e, int *ok, str *src, str *pkgname, str *messages);
-    // int rosie_loadfile(Engine *e, int *ok, str *fn, str *pkgname, str *messages);
+    fn rosie_loadfile(engine : RosieEngine, ok : *mut i32, file_name : *const RosieString, pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_loadfile(Engine *e, int *ok, str *fn, str *pkgname, str *messages);
     // int rosie_import(Engine *e, int *ok, str *pkgname, str *as, str *actual_pkgname, str *messages);
     // int rosie_read_rcfile(Engine *e, str *filename, int *file_exists, str *options, str *messages);
     // int rosie_execute_rcfile(Engine *e, str *filename, int *file_exists, int *no_errors, str *messages);
@@ -424,29 +480,34 @@ fn rosie_engine() {
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
     let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
+    //GOAT, Make these tests work, but first, I need to parse the resulting json
+    // assert_eq!(match_result.len(), 2);
+    // assert_eq!(match_result.as_str(), "21");
+    // assert_eq!(match_result.leftover(), 0);
 
     println!("zook {:?}", match_result);
     println!("result {}", match_result.data.as_str());
 
+    //Try it against non-matching input
+    let match_result = engine.match_pattern(pat_idx, 1, "99").unwrap();
+    // assert_eq!(match_result.len(), 0);
+    // assert_eq!(match_result.as_str(), "");
+    // assert_eq!(match_result.leftover(), 2);
 
+    //GOAT BORIS DELETE
+    // println!("zook {:?}", match_result);
+    // println!("result {}", match_result.data.as_str());
+
+    //Test the trace function, and make sure we get a reasonable result
     let mut trace = RosieMessage::empty();
     assert!(engine.trace_pattern(pat_idx, 1, "21", &mut trace).is_ok());
+    //println!("{}", trace.as_str());
 
-    println!("zuuk {}", trace.as_str());
 
-
-        // let mut input_string = RosieString::empty();
-        // let mut match_result = RosieMatchResult::empty();
-
-        // //let my_ptr : *const u32 = transmute(rosie_engine.0);
-        // //println!("BORK {}, {}, {:?}", pat_idx, messages.as_str(), my_ptr);
-
-        println!("BORK {:?}", pat_idx);
-        
-        // //let result = rosie_match(rosie_engine, 0, 0, "\0".as_ptr(), &mut input_string, &mut match_result);
-
-        // println!("BONK {:?}", match_result.data.ptr);
-
+    //Test loading a package from a file
+    //TODO: This test is probably not robust against different installations with different paths to the pattern library
+    let pkg_name = engine.load_rpl_file("/usr/local/lib/rosie/rpl/word.rpl", None).unwrap();
+    assert_eq!(pkg_name.as_str(), "word");
 
 }
 
