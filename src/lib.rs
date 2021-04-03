@@ -1,9 +1,10 @@
 
 //use std::ffi::CString;
+use std::marker::PhantomData;
 use std::ptr;
 use std::slice;
 use std::str;
-use std::mem::{transmute};
+//use std::mem::{transmute};
 // use std::ffi::CStr;
 // use std::borrow::Cow;
 //use std::alloc::{dealloc, Layout};
@@ -12,83 +13,40 @@ extern crate libc;
 use libc::{size_t, c_void};
 
 
-//---Discussion about RosieStrings---
-//RosieStrings appear to come in both an owned and borrowed flavor.  The data structures are identical, but the usage
-//dictates who is responsible for deallocating the memory.  As a result, we have two separate structs to represent each
-//type, RosieStringBorrowed and RosieStringOwned.  We have a third struct called RosieStringInternal to implement all
-//of the common accessors and convenience functions.  Because the memory layout is identical, we can transmute between
-//the flavors freely.  Publicly, we then expose an enum wrapping both types to make it transparent to the API user
-//what kind of string they are dealing with.
+//---Discussion about RosieString (rstr in librosie)---
+//Strings in librose can either be allocated by the librosie library or allocated by the client.  The buffer containing
+//the actual bytes therefore must be freed or not freed depending on knowledge of where the string came from.  This
+//makes a straightforward wrapper in Rust problematic.  It would be possible to expose a smart wrapper with knowledge
+//about whether a buffer should be freed or not, but this adds extra complexity and overhead.  In fact I already wrote
+//this and then decided against it after seeing how it looked and realizing there was very little need to expose
+//librosie strings to Rust.
+//
+//Now, the RosieString struct is kept private, but we expose a specialized variant called RosieMessage.  A RosieMessage
+//is a RosieString that was allocated by librosie, but where the client is responsible for freeing it
+//
+//Simply put, RosieString doesn't own its buffer, and it a glorified pointer.  RosieMessage does own its buffer, and
+//frees it when dropped.  But the memory layout of both structures is identical.
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C)]
-pub struct RosieStringOwned {
+struct RosieString<'a> {
     len: u32,
-    ptr: *const u8
+    ptr: *const u8, //This pointer really has a lifetime of 'a, hence the phantom
+    phantom: PhantomData<&'a u8>,
 }
 
-impl RosieStringOwned {
+impl RosieString<'_> {
     fn empty() -> Self {
         Self {
             len: 0,
-            ptr: ptr::null()
+            ptr: ptr::null(),
+            phantom: PhantomData
         }
     }
-    pub fn owned_from_str(s: &str) -> Self {
-        unsafe { rosie_new_string(s.as_ptr(), s.len()) }
+    fn from_str(s: &str) -> Self {
+        unsafe { rosie_string_from(s.as_ptr(), s.len()) }
     }
-    fn to_generic(&self) -> &RosieStringGeneric {
-        unsafe { transmute(self) }
-    }
-}
-
-//If it's the owned variant, we are responsible for freeing any string buffers, even if librosie allocated them
-impl Drop for RosieStringOwned {
-    fn drop(&mut self) {
-        if self.ptr != ptr::null() {
-            let self_copy = RosieStringOwned { len : self.len, ptr : self.ptr };
-            unsafe { rosie_free_string(self_copy); }
-        }
-    }
-}
-
-
-//BORIS DELETE THESE COMMENTS
-//Identical to a RosieString, except that we don't free it when it's dropped
-//Currently it's used for match results' data buffer, because the engine owns that
-//TODO: Expose a unified type that allows a RosieString to be created from borrowed data as well.
-//  That will entail wrapping the RosieString in an outer struct to track whether it's owned or borrowed.
-//  Steps: 1. Create a RosieStringInternal that is a generic interface where the implementation lives
-//  2. Change the owned variant into an explicit object separate from the generic
-//  3. Create a public enum that is exported to all public APIs
-#[derive(Debug)]
-#[repr(C)]
-struct RosieStringBorrowed {
-    len: u32,
-    ptr: *const u8
-}
-
-impl RosieStringBorrowed {
-    fn empty() -> Self {
-        Self {
-            len: 0,
-            ptr: ptr::null()
-        }
-    }
-    fn to_generic(&self) -> &RosieStringGeneric {
-        unsafe { transmute(self) }
-    }
-}
-
-#[derive(Debug)]
-#[repr(C)]
-struct RosieStringGeneric {
-    len: u32,
-    ptr: *const u8
-}
-
-impl RosieStringGeneric {
-    pub fn as_str(&self) -> &str {
+    fn as_str(&self) -> &str {
         if self.ptr != ptr::null() {
             let string_slice = unsafe{ slice::from_raw_parts(self.ptr, self.len as usize) };
             str::from_utf8(string_slice).unwrap()
@@ -96,16 +54,37 @@ impl RosieStringGeneric {
             ""
         }
     }
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.len as usize
     }
 }
 
-//Struct for passing text buffers to and from librosie
 #[derive(Debug)]
-pub enum RosieString {
-    Owned(RosieStringOwned),
-    Borrowed(RosieStringBorrowed)
+pub struct RosieMessage(RosieString<'static>);
+
+//If it's the owned variant, we are responsible for freeing any string buffers, even if librosie allocated them
+impl Drop for RosieMessage {
+    fn drop(&mut self) {
+        if self.0.ptr != ptr::null() {
+            unsafe { rosie_free_string(self.0); }
+        }
+    }
+}
+
+impl RosieMessage {
+    pub fn empty() -> Self {
+        Self(RosieString::empty())
+    }
+    pub fn from_str(s: &str) -> Self {
+        let rosie_string = unsafe { rosie_new_string(s.as_ptr(), s.len()) };
+        Self(rosie_string)
+    }
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 //QUESTION FOR A ROSIE EXPERT: How useful are the status messages in the success case?
@@ -133,51 +112,55 @@ impl RosieError {
 }
 
 #[repr(C)]
-pub struct RosieEngine(*mut c_void);
+pub struct RosieEngine<'a> {
+    e: *mut c_void, //This pointer really has a lifetime of 'a, hence the phantom
+    phantom: PhantomData<&'a u8>,
+}
 
 //Give librosie a chance to clean up the engine
-impl Drop for RosieEngine {
+impl Drop for RosieEngine<'_> {
     fn drop(&mut self) {
-        let self_copy = RosieEngine(self.0);
-        unsafe{ rosie_finalize(self_copy); }
+        unsafe{ rosie_finalize(self.copy_self()); }
     }
 }
 
-impl RosieEngine {
-    pub fn new(messages : Option<&mut RosieString>) -> Result<Self, RosieError> {
+impl RosieEngine<'_> {
+    //Internal function that should compile to a noop.  Just here to prepare the arg to call into C
+    fn copy_self(&mut self) -> Self {
+        RosieEngine{e: self.e, phantom : self.phantom}
+    }
+    pub fn new(messages : Option<&mut RosieMessage>) -> Result<Self, RosieError> {
         
-        let mut message_buf = RosieStringOwned::empty().to_generic();
-        // let result_messages = match messages {
-        //     Some(result_messages) => result_messages,
-        //     None => &mut message_buf
-        // };
+        let mut message_buf = RosieString::empty();
 
-        //GOATGOATHERE!!!!!! The solution is that I need to pass back a an owned, regardless of what I got passed in, if something was passed in at all
-        //NOOOOOOOO!!!!!! Better solution:
-        //  RosieStrings are internal and non-public
-        //  "RosieMessage"s are public, and freed when dropped.  They are just a public wrapper around RosieString
-        //  All incoming text buffers can come in as regular Rust strings
+        let rosie_engine = unsafe { rosie_new(&mut message_buf) };
 
-        let rosie_engine = unsafe { rosie_new(result_messages) };
+        if let Some(result_message) = messages {
+            result_message.0 = message_buf;
+        }
 
-        if rosie_engine.0 as *const _ != ptr::null() {
+        if rosie_engine.e as *const _ != ptr::null() {
             Ok(rosie_engine)
         } else {
             Err(RosieError::MiscErr)
         }
     }
-    pub fn compile(&mut self, expression : &RosieString, messages : Option<&mut RosieString>) -> Result<PatternID, RosieError> {
+    pub fn compile(&mut self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<PatternID, RosieError> {
 
         let mut pat_idx : i32 = 0;
         let mut message_buf = RosieString::empty();
-        let result_messages = match messages {
-            Some(result_messages) => result_messages,
-            None => &mut message_buf
-        };
 
-        let self_copy = RosieEngine(self.0);
-        let result_code = unsafe { rosie_compile(self_copy, expression, &mut pat_idx, result_messages) };
+        //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the expression, and it is
+        //safe to deallocate the expression string when this function returns?  I am assuming yes, but if not, this code
+        //must change.
+        let expression_rosie_string = RosieString::from_str(expression);
 
+        let result_code = unsafe { rosie_compile(self.copy_self(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
+
+        if let Some(result_message) = messages {
+            result_message.0 = message_buf;
+        }
+        
         //QUESTION FOR A ROSIE EXPERT.  There appears to a bug in the implementation of rosie_compile.
         //*pat is set to 0 before pat is checked against NULL, meaning that if it were null the code already would have crashed
         //  before the check.  So the check is pointless.
@@ -191,8 +174,7 @@ impl RosieEngine {
         }
     }
     pub fn free_pattern(&mut self, pattern_id : PatternID) -> Result<(), RosieError> {
-        let self_copy = RosieEngine(self.0);
-        let result_code = unsafe { rosie_free_rplx(self_copy, pattern_id.0) };
+        let result_code = unsafe { rosie_free_rplx(self.copy_self(), pattern_id.0) };
 
         if result_code == 0 {
             Ok(())
@@ -200,8 +182,20 @@ impl RosieEngine {
             Err(RosieError::from(result_code))
         }
     }
-    pub fn match_pattern(&mut self, pattern_id : PatternID, start : usize, input : &RosieString, match_result : &mut RosieMatchResult) -> Result<(), RosieError> {
+
+    //QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the input string.
+    //Is this right?  Therefore, the engine could be safely deallocated and the match buffer would still be fine, but if the input
+    //string's buffer were deallocated then the match result would point to freed memory?  Is this right, or is the memory actuall
+    //owned by the engine, and I need to make sure the engine isn't deallocated before the match result?
+    pub fn match_pattern<'input>(&mut self, pattern_id : PatternID, start : usize, input : &'input str) -> Result<RosieMatchResult<'input>, RosieError> {
         
+        //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
+        //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
+        //must change.
+        let input_rosie_string = RosieString::from_str(input);
+
+        let mut match_result = RosieMatchResult::empty();
+
         //TODO: Better encoder integration with Rust
         //DISCUSSION: Temporarily we are using the JSON encoder for the results.  However, there are certainly better options.
         //For most languages, the sensible thing is to go straight into native language types.  Unfortunately Rust's typing
@@ -216,21 +210,29 @@ impl RosieEngine {
         //Option 3. A high-level result-description mechanism.  This is a more ambitious proposal that may require buy-in from
         //  the core Rosie team.  But I think it would provide the most elegant and useful integration possibilities.
         
-        let self_copy = RosieEngine(self.0);
-        let result_code = unsafe{ rosie_match(self_copy, pattern_id.0, start as i32, "json\0".as_ptr(), input, match_result) }; 
+        let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, start as i32, "json\0".as_ptr(), &input_rosie_string, &mut match_result) }; 
 
+        //QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
+        //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
+        //It feels like uninitialized memory or something might be influencing the run.
+        
         if result_code == 0 {
-            Ok(())
+            Ok(match_result)
         } else {
             Err(RosieError::from(result_code))
         }
     }
-    pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &RosieString, trace : &mut RosieString) -> Result<bool, RosieError> {
+    pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str, trace : &mut RosieMessage) -> Result<bool, RosieError> {
+
+        //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
+        //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
+        //must change.
+        let input_rosie_string = RosieString::from_str(input);
 
         let mut matched : i32 = -1;
-        let self_copy = RosieEngine(self.0);
+
         //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
-        let result_code = unsafe { rosie_trace(self_copy, pattern_id.0, start as i32, "condensed\0".as_ptr(), input, &mut matched, trace) };
+        let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, start as i32, "condensed\0".as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
 
         if result_code == 0 {
             if matched == 1 {
@@ -249,18 +251,18 @@ pub struct PatternID(i32);
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct RosieMatchResult {
-    data: RosieStringBorrowed,
+pub struct RosieMatchResult<'a> {
+    data: RosieString<'a>,
     leftover: i32,
     abend: i32,
     ttotal: i32,
     tmatch: i32
 }
 
-impl RosieMatchResult {
+impl RosieMatchResult<'_> {
     pub fn empty() -> Self {
         Self {
-            data: RosieStringBorrowed::empty(),
+            data: RosieString::empty(),
             leftover: 0,
             abend: 0,
             ttotal: 0,
@@ -273,12 +275,13 @@ impl RosieMatchResult {
 
 //Interfaces to the raw librosie functions
 //NOTE: Not all interfaces are imported by the Rust driver
+//NOTE: The 'static lifetime in the returned values is a LIE! The calling code needs to assign the lifetimes appropriately
 extern "C" {
-    fn rosie_new_string(msg : *const u8, len : size_t) -> RosieStringOwned; // str rosie_new_string(byte_ptr msg, size_t len);
+    fn rosie_new_string(msg : *const u8, len : size_t) -> RosieString<'static>; // str rosie_new_string(byte_ptr msg, size_t len);
     // str *rosie_new_string_ptr(byte_ptr msg, size_t len);
     // str *rosie_string_ptr_from(byte_ptr msg, size_t len);
-    // str rosie_string_from(byte_ptr msg, size_t len);
-    fn rosie_free_string(s : RosieStringOwned); // void rosie_free_string(str s);
+    fn rosie_string_from(msg : *const u8, len : size_t) -> RosieString<'static>; // str rosie_string_from(byte_ptr msg, size_t len);
+    fn rosie_free_string(s : RosieString); // void rosie_free_string(str s);
     // void rosie_free_string_ptr(str *s);
     
     fn rosie_new(messages : *mut RosieString) -> RosieEngine; // Engine *rosie_new(str *messages);
@@ -326,33 +329,31 @@ fn rosie_engine() {
     let mut engine = RosieEngine::new(None).unwrap();
 
     //Compile a valid rpl pattern, and confirm there is no error
-    let pat_idx = engine.compile(&RosieString::from_str("{[012][0-9]}"), None).unwrap();
+    let pat_idx = engine.compile("{[012][0-9]}", None).unwrap();
 
     //Make sure we can sucessfully free the pattern
     assert!(engine.free_pattern(pat_idx).is_ok());
     
     //Try to compile an invalid pattern (syntax error), and check the error and error message
-    let mut message = RosieString::empty();
-    let compile_result = engine.compile(&RosieString::from_str("year = bogus"), Some(&mut message));
+    let mut message = RosieMessage::empty();
+    let compile_result = engine.compile("year = bogus", Some(&mut message));
     assert!(compile_result.is_err());
     assert!(message.len() > 0);
     //println!("{}", message.as_str());
 
     //Recompile a pattern expression and match it against a matching input
-    let pat_idx = engine.compile(&RosieString::from_str("{[012][0-9]}"), None).unwrap();
-    let mut match_result = RosieMatchResult::empty();
+    let pat_idx = engine.compile("{[012][0-9]}", None).unwrap();
     //QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up.
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
-    //QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up
-    assert!(engine.match_pattern(pat_idx, 1, &RosieString::from_str("25"), &mut match_result).is_ok());
-    
+    let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
+
     println!("zook {:?}", match_result);
-    println!("result {}", match_result.data.to_generic().as_str());
+    println!("result {}", match_result.data.as_str());
 
 
-    let mut trace = RosieString::empty();
-    assert!(engine.trace_pattern(pat_idx, 1, &RosieString::from_str("25"), &mut trace).is_ok());
+    let mut trace = RosieMessage::empty();
+    assert!(engine.trace_pattern(pat_idx, 1, "21", &mut trace).is_ok());
 
     println!("zuuk {}", trace.as_str());
 
