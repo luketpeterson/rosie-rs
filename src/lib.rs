@@ -425,10 +425,10 @@ impl MatchResult {
         let new_result = serde_json::from_slice(src_result.data.as_bytes()).unwrap();
         new_result
     }
-    pub fn pat_name(&self) -> &str {
+    pub fn pat_name_str(&self) -> &str {
         self.pat_name.as_str()
     }
-    pub fn matched(&self) -> &str {
+    pub fn matched_str(&self) -> &str {
         self.data.as_str()
     }
     pub fn start(&self) -> usize {
@@ -532,8 +532,8 @@ fn rosie_engine() {
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
     let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
-    assert_eq!(match_result.pat_name(), "*");
-    assert_eq!(match_result.matched(), "21");
+    assert_eq!(match_result.pat_name_str(), "*");
+    assert_eq!(match_result.matched_str(), "21");
     assert_eq!(match_result.start(), 1);
     assert_eq!(match_result.end(), 3);
     assert_eq!(match_result.sub_pat_count(), 0);
@@ -552,12 +552,28 @@ fn rosie_engine() {
 
     //Test loading a package from a file
     //TODO: This test is probably not robust against different installations with different paths to the pattern library
-    let pkg_name = engine.load_rpl_file("/usr/local/lib/rosie/rpl/word.rpl", None).unwrap();
-    assert_eq!(pkg_name.as_str(), "word");
+    //This needs to be fixed
+    let pkg_name = engine.load_rpl_file("/usr/local/lib/rosie/rpl/date.rpl", None).unwrap();
+    assert_eq!(pkg_name.as_str(), "date");
 
-//GOAT THIS IS garbage
-    let pkg_name = engine.load_rpl_file("/tmp/currency.rpl", None).unwrap();
-    println!("{}", pkg_name.as_str());
+    //Test a pattern with some recursive sub-patterns
+    let date_pat_idx = engine.compile("date.us_long", None).unwrap();
+    let match_result = engine.match_pattern(date_pat_idx, 1, "Saturday, November 5, 1955").unwrap();
+    assert_eq!(match_result.pat_name_str(), "us_long");
+    assert_eq!(match_result.matched_str(), "Saturday, November 5, 1955");
+    assert_eq!(match_result.start(), 1);
+    assert_eq!(match_result.end(), 27);
+    assert_eq!(match_result.sub_pat_count(), 4);
+    let sub_match_pat_names : Vec<&str> = match_result.sub_pat_iter().map(|result| result.pat_name_str()).collect();
+    assert!(sub_match_pat_names.contains(&"day_name"));
+    assert!(sub_match_pat_names.contains(&"month_name"));
+    assert!(sub_match_pat_names.contains(&"day"));
+    assert!(sub_match_pat_names.contains(&"year"));
+    
+
+// //GOAT THIS IS garbage
+//     let pkg_name = engine.load_rpl_file("/tmp/currency.rpl", None).unwrap();
+//     println!("{}", pkg_name.as_str());
 
     
 
