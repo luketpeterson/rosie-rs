@@ -1,13 +1,9 @@
 
-//use std::ffi::CString;
 use std::marker::PhantomData;
 use std::ptr;
 use std::slice;
 use std::str;
-//use std::mem::{transmute};
-// use std::ffi::CStr;
-// use std::borrow::Cow;
-//use std::alloc::{dealloc, Layout};
+use std::convert::TryFrom;
 
 extern crate libc;
 use libc::{size_t, c_void};
@@ -125,8 +121,8 @@ impl Drop for RosieEngine<'_> {
 }
 
 impl RosieEngine<'_> {
-    //Internal function that should compile to a noop.  Just here to prepare the arg to call into C
-    fn copy_self(&mut self) -> Self {
+    //Internal function that should compile to a no-op.  Prepare the engine arg to call into C without moving out of self
+    fn copy_self(&self) -> Self {
         RosieEngine{e: self.e, phantom : self.phantom}
     }
     pub fn new(messages : Option<&mut RosieMessage>) -> Result<Self, RosieError> {
@@ -143,6 +139,79 @@ impl RosieEngine<'_> {
             Ok(rosie_engine)
         } else {
             Err(RosieError::MiscErr)
+        }
+    }
+    pub fn set_lib_path(&mut self, new_path : &str) -> Result<(), RosieError> {
+
+        //QUESTION FOR A ROSIE EXPERT.  I assume this path is fully ingested and it is safe to free the string buffer after
+        //this function returns.  If not, I will need to change this function
+        let path_rosie_string = RosieString::from_str(new_path);
+
+        let result_code = unsafe { rosie_libpath(self.copy_self(), &path_rosie_string) };
+
+        if result_code == 0 {
+            Ok(())
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+    /// Returns the engine's allocation limit, in bytes.  0 indicates the absence of an allocation limit and therefore unlimited allocations
+    /// are permitted.
+    pub fn get_mem_alloc_limit(&self) -> Result<usize, RosieError> {
+        let mut new_limit : i32 = -1;
+        let mut usage : i32 = 0;
+
+        let result_code = unsafe { rosie_alloc_limit(self.copy_self(), &mut new_limit, &mut usage) };
+
+        if result_code == 0 {
+            Ok(usize::try_from(new_limit).unwrap())
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+    /// Sets the engine's allocation limit, in bytes.  Passing 0 will remove the allocation limit and thus permit the engine to make
+    /// unlimited memory allocations.
+    /// 
+    /// NOTE: The allocation limit allows the engine to allocate `new_limit` bytes **Above** the current memory usage.  For example,
+    /// if the engine were currently using 3000 bytes, and you called this function with a `new_limit` value of 10000, then the engine
+    /// would be permitted to consume a total of 13000 bytes in total.
+    /// 
+    /// NOTE: This function will panic if the `new_limit` argument is higher than 2GB.
+    pub fn set_mem_alloc_limit(&self, new_limit : usize) -> Result<(), RosieError> {
+        let mut new_limit_mut = i32::try_from(new_limit).unwrap();
+        let mut usage : i32 = 0;
+
+        let result_code = unsafe { rosie_alloc_limit(self.copy_self(), &mut new_limit_mut, &mut usage) };
+
+        if result_code == 0 {
+            Ok(())
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+    // Returns the current memory usage of the engine
+    pub fn get_mem_usage(&self) -> Result<usize, RosieError> {
+        let mut new_limit : i32 = -1;
+        let mut usage : i32 = 0;
+
+        let result_code = unsafe { rosie_alloc_limit(self.copy_self(), &mut new_limit, &mut usage) };
+
+        if result_code == 0 {
+            Ok(usize::try_from(usage).unwrap())
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+    pub fn get_config_as_json(&self) -> Result<RosieMessage, RosieError> {
+
+        let mut message_buf = RosieString::empty();
+
+        let result_code = unsafe { rosie_config(self.copy_self(), &mut message_buf) };
+
+        if result_code == 0 {
+            Ok(RosieMessage(message_buf))
+        } else {
+            Err(RosieError::from(result_code))
         }
     }
     pub fn compile(&mut self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<PatternID, RosieError> {
@@ -286,9 +355,9 @@ extern "C" {
     
     fn rosie_new(messages : *mut RosieString) -> RosieEngine; // Engine *rosie_new(str *messages);
     fn rosie_finalize(engine : RosieEngine); // void rosie_finalize(Engine *e);
-    // int rosie_libpath(Engine *e, str *newpath);
-    // int rosie_alloc_limit(Engine *e, int *newlimit, int *usage);
-    // int rosie_config(Engine *e, str *retvals);
+    fn rosie_libpath(engine : RosieEngine, newpath : *const RosieString) -> i32;// int rosie_libpath(Engine *e, str *newpath);
+    fn rosie_alloc_limit(engine : RosieEngine, newlimit : *mut i32, usage : *mut i32) -> i32;// int rosie_alloc_limit(Engine *e, int *newlimit, int *usage);
+    fn rosie_config(engine : RosieEngine, retvals : *mut RosieString) -> i32;// int rosie_config(Engine *e, str *retvals);
     fn rosie_compile(engine : RosieEngine, expression : *const RosieString, pat : *mut i32, messages : *mut RosieString) -> i32; // int rosie_compile(Engine *e, str *expression, int *pat, str *messages);
     fn rosie_free_rplx(engine : RosieEngine, pat : i32) -> i32; // int rosie_free_rplx(Engine *e, int pat);
     fn rosie_match(engine : RosieEngine, pat : i32, start : i32, encoder : *const u8, input : *const RosieString, match_result : *mut RosieMatchResult) -> i32; // int rosie_match(Engine *e, int pat, int start, char *encoder, str *input, match *match);
@@ -327,6 +396,14 @@ fn rosie_engine() {
 
     //Create the engine and check that it was sucessful
     let mut engine = RosieEngine::new(None).unwrap();
+
+    //Make sure we can get the engine config
+    let _ = engine.get_config_as_json().unwrap();
+
+    //Check the alloc limit, set it to unlimited, check the usage
+    let _ = engine.get_mem_alloc_limit().unwrap();
+    assert!(engine.set_mem_alloc_limit(0).is_ok());
+    let _ = engine.get_mem_usage().unwrap();
 
     //Compile a valid rpl pattern, and confirm there is no error
     let pat_idx = engine.compile("{[012][0-9]}", None).unwrap();
@@ -370,9 +447,6 @@ fn rosie_engine() {
 
         // println!("BONK {:?}", match_result.data.ptr);
 
-
-
-    
 
 }
 
