@@ -2,12 +2,15 @@
 use std::marker::PhantomData;
 use std::ptr;
 use std::slice;
+use std::slice::Iter;
 use std::str;
 use std::convert::TryFrom;
 
 extern crate libc;
 use libc::{size_t, c_void};
 
+extern crate serde_json;
+use serde::{*};
 
 //---Discussion about RosieString (rstr in librosie)---
 //Strings in librose can either be allocated by the librosie library or allocated by the client.  The buffer containing
@@ -50,6 +53,9 @@ impl RosieString<'_> {
     fn from_str(s: &str) -> Self {
         unsafe { rosie_string_from(s.as_ptr(), s.len()) }
     }
+    fn is_valid(&self) -> bool {
+        self.ptr != ptr::null()
+    }
     fn as_bytes(&self) -> &[u8] {
         if self.ptr != ptr::null() {
             unsafe{ slice::from_raw_parts(self.ptr, usize::try_from(self.len).unwrap()) }
@@ -69,7 +75,7 @@ impl RosieString<'_> {
 #[derive(Debug)]
 pub struct RosieMessage(RosieString<'static>);
 
-//If it's the owned variant, we are responsible for freeing any string buffers, even if librosie allocated them
+//For some strings, we are responsible for freeing any string buffers, even if librosie allocated them
 impl Drop for RosieMessage {
     fn drop(&mut self) {
         self.0.manual_drop();
@@ -83,6 +89,9 @@ impl RosieMessage {
     pub fn from_str(s: &str) -> Self {
         let rosie_string = unsafe { rosie_new_string(s.as_ptr(), s.len()) };
         Self(rosie_string)
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
     }
     pub fn as_str(&self) -> &str {
         self.0.as_str()
@@ -276,14 +285,17 @@ impl RosieEngine<'_> {
     //Is this right?  Therefore, the input string could be safely deallocated and the match buffer would still be fine, but if
     //the engine were deallocated then the match result would point to freed memory?  Is this right, or do I need to make sure
     //the input string's buffer isn't deallocated while the match result is still in use?
-    pub fn match_pattern<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str) -> Result<RosieMatchResult<'engine>, RosieError> {
+    //UPDATE: It's a moot point for now because Serde ends up copying the whole match result into a local buffer.  However, 
+    // that may not always be the case, and it's obviously inefficient to perform needless copying.  It would be good to
+    // understand this better, and remove the copy in the future. (and remove serde as well!)
+    pub fn match_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str) -> Result<MatchResult, RosieError> {
         
         //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
         //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
         //must change.
         let input_rosie_string = RosieString::from_str(input);
 
-        let mut match_result = RosieMatchResult::empty();
+        let mut match_result = InternalMatchResult::empty();
 
         //TODO: Better encoder integration with Rust
         //DISCUSSION: Temporarily we are using the JSON encoder for the results.  However, there are certainly better options.
@@ -305,8 +317,13 @@ impl RosieEngine<'_> {
         //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
         //It feels like uninitialized memory or something might be influencing the run.
         
-        if result_code == 0 {
-            Ok(match_result)
+        //QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
+        //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
+        //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
+        //the current code does, is not a very friendly interface
+
+        if result_code == 0 && match_result.data.is_valid() {
+            Ok(MatchResult::from_internal_match_result(&match_result))
         } else {
             Err(RosieError::from(result_code))
         }
@@ -371,7 +388,7 @@ pub struct PatternID(i32);
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct RosieMatchResult<'a> {
+struct InternalMatchResult<'a> {
     data: RosieString<'a>,
     leftover: i32,
     abend: i32,
@@ -379,7 +396,7 @@ pub struct RosieMatchResult<'a> {
     tmatch: i32
 }
 
-impl RosieMatchResult<'_> {
+impl InternalMatchResult<'_> {
     pub fn empty() -> Self {
         Self {
             data: RosieString::empty(),
@@ -389,18 +406,51 @@ impl RosieMatchResult<'_> {
             tmatch: 0
         }
     }
-    pub fn as_str(&self) -> &str {
-        self.data.as_str()
-    }
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-    pub fn leftover(&self) -> usize {
-        usize::try_from(self.leftover).unwrap()
-    }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MatchResult {
+    #[serde(rename = "type")]
+    pat_name : String, //Sometimes called "type"
+    #[serde(rename = "s")]
+    start : usize,
+    #[serde(rename = "e")]
+    end : usize,
+    data : String,
+    subs : Option<Box<Vec<MatchResult>>>
+}
 
+impl MatchResult {
+    fn from_internal_match_result(src_result : &InternalMatchResult) -> Self {
+        let new_result = serde_json::from_slice(src_result.data.as_bytes()).unwrap();
+        new_result
+    }
+    pub fn pat_name(&self) -> &str {
+        self.pat_name.as_str()
+    }
+    pub fn matched(&self) -> &str {
+        self.data.as_str()
+    }
+    pub fn start(&self) -> usize {
+        self.start
+    }
+    pub fn end(&self) -> usize {
+        self.end
+    }
+    pub fn sub_pat_count(&self) -> usize {
+        match &self.subs {
+            Some(subs_vec) => subs_vec.len(),
+            None => 0
+        }
+    }
+    pub fn sub_pat_iter(&self) -> Iter<'_, MatchResult> {
+        match &self.subs {
+            Some(subs_vec) => subs_vec.iter(),
+            None => [].iter()
+        }
+    }
+
+}
 
 //Interfaces to the raw librosie functions
 //NOTE: Not all interfaces are imported by the Rust driver
@@ -420,7 +470,7 @@ extern "C" {
     fn rosie_config(engine : RosieEngine, retvals : *mut RosieString) -> i32;// int rosie_config(Engine *e, str *retvals);
     fn rosie_compile(engine : RosieEngine, expression : *const RosieString, pat : *mut i32, messages : *mut RosieString) -> i32; // int rosie_compile(Engine *e, str *expression, int *pat, str *messages);
     fn rosie_free_rplx(engine : RosieEngine, pat : i32) -> i32; // int rosie_free_rplx(Engine *e, int pat);
-    fn rosie_match(engine : RosieEngine, pat : i32, start : i32, encoder : *const u8, input : *const RosieString, match_result : *mut RosieMatchResult) -> i32; // int rosie_match(Engine *e, int pat, int start, char *encoder, str *input, match *match);
+    fn rosie_match(engine : RosieEngine, pat : i32, start : i32, encoder : *const u8, input : *const RosieString, match_result : *mut InternalMatchResult) -> i32; // int rosie_match(Engine *e, int pat, int start, char *encoder, str *input, match *match);
     // int rosie_matchfile(Engine *e, int pat, char *encoder, int wholefileflag,
     //            char *infilename, char *outfilename, char *errfilename,
     //            int *cin, int *cout, int *cerr,
@@ -438,8 +488,6 @@ extern "C" {
     // int rosie_block_deps(Engine *e, str *input, str *deps, str *messages);
     // int rosie_parse_expression(Engine *e, str *input, str *parsetree, str *messages);
     // int rosie_parse_block(Engine *e, str *input, str *parsetree, str *messages);
-
-    
 
 }
 
@@ -484,23 +532,18 @@ fn rosie_engine() {
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
     let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
-    //GOAT, Make these tests work, but first, I need to parse the resulting json
-    // assert_eq!(match_result.len(), 2);
-    // assert_eq!(match_result.as_str(), "21");
-    // assert_eq!(match_result.leftover(), 0);
+    assert_eq!(match_result.pat_name(), "*");
+    assert_eq!(match_result.matched(), "21");
+    assert_eq!(match_result.start(), 1);
+    assert_eq!(match_result.end(), 3);
+    assert_eq!(match_result.sub_pat_count(), 0);
 
-    println!("zook {:?}", match_result);
-    println!("result {}", match_result.data.as_str());
-
-    //Try it against non-matching input
-    let match_result = engine.match_pattern(pat_idx, 1, "99").unwrap();
-    // assert_eq!(match_result.len(), 0);
-    // assert_eq!(match_result.as_str(), "");
-    // assert_eq!(match_result.leftover(), 2);
-
-    //GOAT BORIS DELETE
+    //GOAT DEAD CODE GARBAGE BORIS
     // println!("zook {:?}", match_result);
     // println!("result {}", match_result.data.as_str());
+
+    //Try it against non-matching input, and make sure we get the appropriate error
+    assert!(engine.match_pattern(pat_idx, 1, "99").is_err());
 
     //Test the trace function, and make sure we get a reasonable result
     let mut trace = RosieMessage::empty();
@@ -511,6 +554,12 @@ fn rosie_engine() {
     //TODO: This test is probably not robust against different installations with different paths to the pattern library
     let pkg_name = engine.load_rpl_file("/usr/local/lib/rosie/rpl/word.rpl", None).unwrap();
     assert_eq!(pkg_name.as_str(), "word");
+
+//GOAT THIS IS garbage
+    let pkg_name = engine.load_rpl_file("/tmp/currency.rpl", None).unwrap();
+    println!("{}", pkg_name.as_str());
+
+    
 
 }
 
