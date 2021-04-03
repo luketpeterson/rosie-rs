@@ -18,10 +18,11 @@ use libc::{size_t, c_void};
 //librosie strings to Rust.
 //
 //Now, the RosieString struct is kept private, but we expose a specialized variant called RosieMessage.  A RosieMessage
-//is a RosieString that was allocated by librosie, but where the client is responsible for freeing it
+//is a RosieString that was allocated by librosie, but where the librosie client is responsible for freeing it.
+//Therefore, RosieMessage implements the Rust Drop trait to clean up its buffer when it is no longer needed.
 //
-//Simply put, RosieString doesn't own its buffer, and it a glorified pointer.  RosieMessage does own its buffer, and
-//frees it when dropped.  But the memory layout of both structures is identical.
+//Simply put, RosieString doesn't own its buffer, and it's basically a glorified pointer.  RosieMessage does own its
+//buffer, and frees it when dropped.  But the memory layout of both structures is identical.
 
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
@@ -49,13 +50,16 @@ impl RosieString<'_> {
     fn from_str(s: &str) -> Self {
         unsafe { rosie_string_from(s.as_ptr(), s.len()) }
     }
-    fn as_str(&self) -> &str {
+    fn as_bytes(&self) -> &[u8] {
         if self.ptr != ptr::null() {
-            let string_slice = unsafe{ slice::from_raw_parts(self.ptr, self.len as usize) };
-            str::from_utf8(string_slice).unwrap()
+            unsafe{ slice::from_raw_parts(self.ptr, usize::try_from(self.len).unwrap()) }
         } else {
-            ""
+            "".as_bytes()
         }
+    }
+    fn as_str(&self) -> &str {
+        let string_slice = self.as_bytes();
+        str::from_utf8(string_slice).unwrap()
     }
     fn len(&self) -> usize {
         usize::try_from(self.len).unwrap()
@@ -295,7 +299,7 @@ impl RosieEngine<'_> {
         //Option 3. A high-level result-description mechanism.  This is a more ambitious proposal that may require buy-in from
         //  the core Rosie team.  But I think it would provide the most elegant and useful integration possibilities.
         
-        let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, start as i32, "json\0".as_ptr(), &input_rosie_string, &mut match_result) }; 
+        let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), "json\0".as_ptr(), &input_rosie_string, &mut match_result) }; 
 
         //QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
         //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
@@ -319,7 +323,7 @@ impl RosieEngine<'_> {
         trace.0.manual_drop(); //We'll be overwriting whatever string was already there
 
         //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
-        let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, start as i32, "condensed\0".as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
+        let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), "condensed\0".as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
 
         if result_code == 0 {
             if matched == 1 {
@@ -502,7 +506,6 @@ fn rosie_engine() {
     let mut trace = RosieMessage::empty();
     assert!(engine.trace_pattern(pat_idx, 1, "21", &mut trace).is_ok());
     //println!("{}", trace.as_str());
-
 
     //Test loading a package from a file
     //TODO: This test is probably not robust against different installations with different paths to the pattern library
