@@ -477,6 +477,36 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
+
+    pub fn import_pkg(&mut self, pkg_name : &str, alias : Option<&str>, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
+
+        let in_pkg_name = RosieString::from_str(pkg_name);
+        let in_alias = match alias {
+            Some(alias_str) => RosieString::from_str(alias_str),
+            None => RosieString::empty()
+        };
+        let mut out_pkg_name = RosieString::empty();
+        let mut message_buf = RosieString::empty();
+        let mut ok : i32 = 0;
+
+        let result_code = unsafe { rosie_import(self.copy_self(), &mut ok, &in_pkg_name, &in_alias, &mut out_pkg_name, &mut message_buf) };
+        
+        if let Some(result_message) = messages {
+            result_message.0.manual_drop(); //We're overwriting the string that was there
+            result_message.0 = message_buf;
+        } else {
+            message_buf.manual_drop();
+        }
+
+        //QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
+        //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
+        if result_code == 0 && out_pkg_name.len() > 0 && ok > 0 {
+            Ok(RosieMessage(out_pkg_name))
+        } else {
+            out_pkg_name.manual_drop();
+            Err(RosieError::from(result_code))
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
@@ -576,7 +606,7 @@ extern "C" {
     fn rosie_trace(e : RosieEngine, pat : i32, start : i32, trace_style : *const u8, input : *const RosieString, matched : &mut i32, trace : *mut RosieString) -> i32; // int rosie_trace(Engine *e, int pat, int start, char *trace_style, str *input, int *matched, str *trace);
     fn rosie_load(e : RosieEngine, ok : *mut i32, rpl_text : *const RosieString, pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_load(Engine *e, int *ok, str *src, str *pkgname, str *messages);
     fn rosie_loadfile(e : RosieEngine, ok : *mut i32, file_name : *const RosieString, pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_loadfile(Engine *e, int *ok, str *fn, str *pkgname, str *messages);
-    // int rosie_import(Engine *e, int *ok, str *pkgname, str *as, str *actual_pkgname, str *messages);
+    fn rosie_import(e : RosieEngine, ok : *mut i32, pkgname : *const RosieString, as_name : *const RosieString, actual_pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_import(Engine *e, int *ok, str *pkgname, str *as, str *actual_pkgname, str *messages);
     // int rosie_read_rcfile(Engine *e, str *filename, int *file_exists, str *options, str *messages);
     // int rosie_execute_rcfile(Engine *e, str *filename, int *file_exists, int *no_errors, str *messages);
 
@@ -683,7 +713,18 @@ fn rosie_engine() {
     let pkg_name = engine.load_pkg_from_file("/usr/local/lib/rosie/rpl/date.rpl", None).unwrap();
     assert_eq!(pkg_name.as_str(), "date");
 
-    //Test a pattern with some recursive sub-patterns
+    //Test importing a package
+    let pkg_name = engine.import_pkg("net", None, None).unwrap();
+    assert_eq!(pkg_name.as_str(), "net");
+
+    //Test importing a package with an alias
+    let mut message = RosieMessage::empty();//TODO, messages are unnecessary in this test.  I'm just confused by the API behavior
+    let _pkg_name = engine.import_pkg("char", Some("characters"), Some(&mut message)).unwrap();
+    println!("{}", message.as_str());
+    //QUESTION FOR A ROSIE EXPERT.  What does the "as" argument to rosie_import actually do?
+    //assert_eq!(pkg_name.as_str(), "characters");
+
+    //Test matching a pattern with some recursive sub-patterns
     let date_pat_idx = engine.compile("date.us_long", None).unwrap();
     let match_result = engine.match_pattern(date_pat_idx, 1, "Saturday, November 5, 1955").unwrap();
     assert_eq!(match_result.pat_name_str(), "us_long");
