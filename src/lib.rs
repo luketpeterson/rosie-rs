@@ -43,14 +43,14 @@ impl RosieString<'_> {
             self.ptr = ptr::null();
         }
     }
-    fn empty() -> Self {
-        Self {
+    fn empty() -> RosieString<'static> {
+        RosieString {
             len: 0,
             ptr: ptr::null(),
             phantom: PhantomData
         }
     }
-    fn from_str(s: &str) -> Self {
+    fn from_str<'a>(s: &'a str) -> RosieString<'a> {
         unsafe { rosie_string_from(s.as_ptr(), s.len()) }
     }
     fn is_valid(&self) -> bool {
@@ -89,6 +89,9 @@ impl RosieMessage {
     pub fn from_str(s: &str) -> Self {
         let rosie_string = unsafe { rosie_new_string(s.as_ptr(), s.len()) };
         Self(rosie_string)
+    }
+    pub fn is_valid(&self) -> bool {
+        self.0.is_valid()
     }
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
@@ -408,6 +411,11 @@ impl InternalMatchResult<'_> {
     }
 }
 
+//Discussion about MatchResult.
+//This probably belongs at a higher level, in the "rosie" crate, rather than the "rosie-sys" crate.
+//I don't think rosie-sys should depend on serde, but also, there is a lot more we can do to make the
+//results friendlier to consume for the API client.
+
 #[derive(Debug, Deserialize)]
 pub struct MatchResult {
     #[serde(rename = "type")]
@@ -493,10 +501,33 @@ extern "C" {
 
 #[test]
 fn rosie_string() {
+
+    //A basic RosieString, pointing to a static string
     let hello_str = "hello";
     let rosie_string = RosieString::from_str(hello_str);
     assert_eq!(rosie_string.len(), hello_str.len());
     assert_eq!(rosie_string.as_str(), hello_str);
+
+    //A RosieString pointing to a heap-allocated string
+    let hello_string = String::from("hi there");
+    let rosie_string = RosieString::from_str(hello_string.as_str());
+    assert_eq!(rosie_string.len(), hello_string.len());
+    assert_eq!(rosie_string.as_str(), hello_string);
+
+    //Ensure we can't deallocate our rust String without deallocating our RosieString first
+    drop(hello_string);
+    //TODO: Implement a TryBuild harness in order to ensure the line below will not compile 
+    //assert!(rosie_string.is_valid());
+
+    //Make a RosieMessage, pointing to a heap-allocated string
+    let hello_string = String::from("howdy");
+    let rosie_message = RosieMessage::from_str(hello_string.as_str());
+    assert_eq!(rosie_message.len(), hello_string.len());
+    assert_eq!(rosie_message.as_str(), hello_string);
+
+    //Now test that we can safely deallocate the heap-allocated String that we used to create a RosieMessage
+    drop(hello_string);
+    assert!(rosie_message.is_valid());
 }
 
 #[test]
@@ -538,10 +569,6 @@ fn rosie_engine() {
     assert_eq!(match_result.end(), 3);
     assert_eq!(match_result.sub_pat_count(), 0);
 
-    //GOAT DEAD CODE GARBAGE BORIS
-    // println!("zook {:?}", match_result);
-    // println!("result {}", match_result.data.as_str());
-
     //Try it against non-matching input, and make sure we get the appropriate error
     assert!(engine.match_pattern(pat_idx, 1, "99").is_err());
 
@@ -570,6 +597,7 @@ fn rosie_engine() {
     assert!(sub_match_pat_names.contains(&"day"));
     assert!(sub_match_pat_names.contains(&"year"));
     
+
 
 // //GOAT THIS IS garbage
 //     let pkg_name = engine.load_rpl_file("/tmp/currency.rpl", None).unwrap();
