@@ -20,7 +20,7 @@
 //! 
 //! **NOTE**: This crate has been tested aganst `librosie` version **1.2.2**, although it may be compatible with other versions.
 //! 
-//! **NOTE**: In the future, I would like to include an option to statically link `librosie`, as well as an option to automatically build Rosie through `cargo`.
+//! **NOTE**: In the future, I would like to include an option to statically link `librosie`, as well as an option to automatically build Rosie through `cargo`.  (Q-01.02 & Q-01.01 QUESTION)
 //! 
 //! ## In Cargo.toml
 //! Add the following line to your Cargo.toml `[dependencies]` section:
@@ -28,7 +28,7 @@
 //! `rosie_sys = "0.1.0"`
 //! 
 //! **NOTE**: I would like to have a crate version that references the `librosie` version, but I want a minor-digit to allow for a revision to the
-//! rust crate without a revision to `librosie`, and unfortunately `Cargo` only supports 3-tupple versions.
+//! rust crate without a revision to `librosie`, and unfortunately `Cargo` only supports 3-tupple versions. (Q-01.04 QUESTION)
 //! 
 //! ## Example Usage
 //! ```
@@ -178,7 +178,7 @@ impl RosieMessage {
     }
 }
 
-//QUESTION FOR A ROSIE EXPERT: How useful are the status messages in the success case?
+//Q-03.03: QUESTION FOR A ROSIE EXPERT: How useful are the status messages in the success case?
 //It feels like a cleaner interface if we could get rid of the messages optional parameter, and pass back the messages
 //  with the error code.
 
@@ -202,7 +202,7 @@ pub enum RosieError {
 }
 
 impl RosieError {
-    pub fn from(code: i32) -> Self {
+    fn from(code: i32) -> Self {
         match code {
             0 => RosieError::Success,
             -2 => RosieError::OutOfMemory,
@@ -224,7 +224,7 @@ pub enum MatchEncoder {
     /// A compact encoding of the match information into an array of bytes.
     Byte,
     /// A human-readable format using ANSI text coloring for different elements.  The colors associated with each element
-    /// can be customized by **QUESTION FOR A ROSIE EXPERT: Where is this documented?**
+    /// can be customized by **Q-04.02 QUESTION FOR A ROSIE EXPERT: Where is this documented?**
     Color,
     /// A json-encoded match structure.
     JSON,
@@ -237,7 +237,7 @@ pub enum MatchEncoder {
     /// The subset of the input matched by each sub-expression of the pattern will be a line in the output.
     Subs,
     /// The output of a custom encoder module, implemented in `Lua`.  Documentation on implementing encoder modules can
-    /// be found **QUESTION FOR A ROSIE EXPERT: Where is this documented?**
+    /// be found **Q-04.03 QUESTION FOR A ROSIE EXPERT: Where is this documented?**
     Custom(CString),
 }
 
@@ -322,7 +322,7 @@ impl RosieEngine<'_> {
     /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as any other operations that load rpl code using the `import` directive.
     pub fn set_lib_path(&mut self, new_path : &str) -> Result<(), RosieError> {
 
-        //QUESTION FOR A ROSIE EXPERT.  I assume this path is fully ingested and it is safe to free the string buffer after
+        //Q-02.01 QUESTION FOR A ROSIE EXPERT.  I assume this path is fully ingested and it is safe to free the string buffer after
         //this function returns.  If not, I will need to change this function
         let mut path_rosie_string = RosieString::from_str(new_path);
 
@@ -383,7 +383,7 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    //QUESTION: Does it make sense to parse this json into a structure that's easier to query?  The API client can parse
+    //PUNT. QUESTION: Does it make sense to parse this json into a structure that's easier to query?  The API client can parse
     //it easily enough, so probably better to keep the crate dependencies lower.
     //NOTE: I've got a dependency on Serde JSON anyway, in order to parse match results.  However, I hope to remove that soon.
     /// Returns a [RosieMessage] containing a JSON-formatted structure of Rosie configuration parameters.
@@ -424,7 +424,7 @@ impl RosieEngine<'_> {
         let mut pat_idx : i32 = 0;
         let mut message_buf = RosieString::empty();
 
-        //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the expression, and it is
+        //Q-02.02 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the expression, and it is
         //safe to deallocate the expression string when this function returns?  I am assuming yes, but if not, this code
         //must change.
         let expression_rosie_string = RosieString::from_str(expression);
@@ -438,10 +438,10 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
         
-        //QUESTION FOR A ROSIE EXPERT.  There appears to a bug in the implementation of rosie_compile.
+        //Q-02.05 QUESTION FOR A ROSIE EXPERT.  There appears to a bug in the implementation of rosie_compile.
         //*pat is set to 0 before pat is checked against NULL, meaning that if it were null the code already would have crashed
         //  before the check.  So the check is pointless.
-        //QUESTION FOR A ROSIE EXPERT.  Why is it that an invalid pattern syntax will result in a Success result code, even if
+        //Q-03.01 QUESTION FOR A ROSIE EXPERT.  Why is it that an invalid pattern syntax will result in a Success result code, even if
         //  the returned pattern index is 0?  I don't want invalid PatternIDs to be possible in Rust, therefore, I'm also
         //  checking the pattern index against 0.  Am I misunderstanding the librosie interface?
         if result_code == 0 && pat_idx > 0 {
@@ -461,7 +461,7 @@ impl RosieEngine<'_> {
         }
     }
 
-    //QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the engine.
+    //Q-02.06 QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the engine.
     //Is this right?  Therefore, the input string could be safely deallocated and the match buffer would still be fine, but if
     //the engine were deallocated then the match result would point to freed memory?  Is this right, or do I need to make sure
     //the input string's buffer isn't deallocated while the match result is still in use?
@@ -477,10 +477,10 @@ impl RosieEngine<'_> {
     /// 
     /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
     /// 
-    /// **NOTE**: QUESTION FOR A ROSIE EXPERT: Why do we have 1-based indexing for `start`?
+    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
     pub fn match_pattern(&self, pattern_id : PatternID, start : usize, input : &str) -> Result<MatchResult, RosieError> {
         
-        //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
+        //Q-02.03 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
         //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
         //must change.
         let input_rosie_string = RosieString::from_str(input);
@@ -505,11 +505,11 @@ impl RosieEngine<'_> {
         
         let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
 
-        //QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
+        //Q-04.01: QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
         //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
         //It feels like uninitialized memory or something might be influencing the run.
         
-        //QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
+        //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
         //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
         //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
         //the current code does, is not a very friendly interface
@@ -520,6 +520,7 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
+    //Q-03.04: QUESTION FOR A ROSIE EXPERT
     //This API looks like it is designed for working with input data that is too big to load into memory all at once, so presumably passing whole_file = true.  Otherwise the loading of input data should be left to the Rust side.
     //TODO: This API can wait for later, until I understand the interface better.  If someone needs this functionality to work with very large files at once, perhaps the cmd-line tool is a better choice.
     //pub fn match_pattern_in_file(&self, pattern_id : PatternID, encoder : &MatchEncoder, whole_file : bool, in_file : &str, out_file : &str, err_file : &str, cin : *mut i32, cout : *mut i32, cerr : *mut i32, err : *mut RosieString) {
@@ -550,7 +551,7 @@ impl RosieEngine<'_> {
 
         //TODO: We should probably take the trace format as an argument
 
-        //QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
+        //Q-02.04 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
         //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
         //must change.
         let input_rosie_string = RosieString::from_str(input);
@@ -572,11 +573,11 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    //QUESTION FOR A ROSIE EXPERT: the code for rosie_load says "N.B. Client must free 'messages' ", but I spotted a few places where
+    //Q-02.07 QUESTION FOR A ROSIE EXPERT: the code for rosie_load says "N.B. Client must free 'messages' ", but I spotted a few places where
     //messages was set using `rosie_new_string_from_const`, which means the pointer points to a static, and shouldn't be freed.
     //I think this is a bug that must be fixed in librosie because there is no way that a client of librosie can know whether a
     //messages buffer is freeable except by duplicating the logic of librosie.
-    //In addition, the comment makes no mention of pkgname.  However, looking inside the function implementation, it appears that
+    //Q-02.08 QUESTION FOR A ROSIE EXPERT.  In addition, the comment makes no mention of pkgname.  However, looking inside the function implementation, it appears that
     //pkgname is allocated with rosie_new_string, and not retained inside the engine, therefore, it appears that the caller is also
     //responsible for deallocating 'pkgname'.  Did I miss something?
     
@@ -602,7 +603,7 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        //QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified rpl text fails
+        //Q-03.01 QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified rpl text fails
         //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
         if result_code == 0 && pkg_name.len() > 0 && ok > 0 {
             Ok(RosieMessage(pkg_name))
@@ -611,7 +612,7 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    //QUESTION FOR A ROSIE EXPERT: the code for rosie_loadfile says "N.B. Client must free 'messages' ", but it makes no mention of
+    //Q-02.08 QUESTION FOR A ROSIE EXPERT: the code for rosie_loadfile says "N.B. Client must free 'messages' ", but it makes no mention of
     //pkgname.  However, looking inside the function implementation, it appears that pkgname is allocated with rosie_new_string, and
     //not retained inside the engine, therefore, it appears that the caller is also responsible for deallocating 'pkgname'.  Did I
     //miss something?
@@ -638,7 +639,7 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        //QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
+        //Q-03.01 QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
         //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
         if result_code == 0 && pkg_name.len() > 0 && ok > 0 {
             Ok(RosieMessage(pkg_name))
@@ -672,10 +673,10 @@ impl RosieEngine<'_> {
     /// ```
     /// 
     
-    //QUESTION FOR A ROSIE EXPERT: Why is the returned actual_pkgname equal to supplied "pkg_name", and not "as"?  It's not a big
+    //Q-03.06 QUESTION FOR A ROSIE EXPERT: Why is the returned actual_pkgname equal to supplied "pkg_name", and not "as"?  It's not a big
     //  deal, but little clues like this often indicate deeper flaws with my understanding.
 
-    //QUESTION FOR A ROSIE EXPERT: What is the point of the "as" argument full-stop?  Is there a situation where a user may
+    //Q-03.05 QUESTION FOR A ROSIE EXPERT: What is the point of the "as" argument full-stop?  Is there a situation where a user may
     //  want to load a package under multiple names?  That would make sense if it were possible to extend packages and then you 
     //  might wind up with the original package for compatibility and your extended version that you modified for your purpose.
     //  But I'm unclear on how the "package extending" functionality would work.
@@ -699,7 +700,7 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        //QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
+        //Q-03.01 QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
         //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
         if result_code == 0 && out_pkg_name.len() > 0 && ok > 0 {
             Ok(RosieMessage(out_pkg_name))
@@ -895,7 +896,7 @@ fn rosie_engine() {
 
     //Recompile a pattern expression and match it against a matching input
     let pat_idx = engine.compile("{[012][0-9]}", None).unwrap();
-    //QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up.
+    //Q-03.07 QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up.
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
     let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
@@ -931,7 +932,7 @@ fn rosie_engine() {
     let mut message = RosieMessage::empty();//TODO, messages are unnecessary in this test.  I'm just confused by the API behavior
     let _pkg_name = engine.import_pkg("char", Some("characters"), Some(&mut message)).unwrap();
     println!("{}", message.as_str());
-    //QUESTION FOR A ROSIE EXPERT.  What does the "as" argument to rosie_import actually do?
+    //Q-03.06 QUESTION FOR A ROSIE EXPERT.  What does the "as" argument to rosie_import actually do?
     //assert_eq!(pkg_name.as_str(), "characters");
 
     //ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"

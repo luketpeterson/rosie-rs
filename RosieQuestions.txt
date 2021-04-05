@@ -1,0 +1,223 @@
+
+Rosie Rust Crate Questions:
+
+Section 1, Build & Linking
+
+Q-01.01: Does static-linking librosie into a compiled executable make any sense?  The intention here is to reduce deployment
+    complexity for client apps, since most systems are unlikely to have librosie already installed.  However, if Rosie itself
+    has many other dependencies or if there is no easy way to bundle the standard pattern library then static linking may
+    not accomplish anything.
+
+Q-01.02: What is the best way to build librosie from within Cargo (the rust code package manager)?  My intention here is to
+    provide a more streamlined experience for Rust developers using the Rosie crate.  It appears there are several options:
+    Option 1: Include the rosie source inside the cargo crate.  Zipped up, rosie-v1.2.2 source is ~8MB, which isn't too bad.
+        but then the build process would need to unpack it, run `make fetch` to pull in the additional dependencies, and
+        finally build it.  This means the build process relies on the (gitlab?) server being up, as well as bloating the
+        crate itself.  A compromise featuring the bad parts from both options, but perhaps the simplest
+    Option 2: Pull the rosie source from a server.  This saves the crate bloat, but still relies on the rosie source server 
+        being awake.  If this option is preferred, what is the best server & protocol to use to fetch the initial Rosie
+        source?  `git clone` ends up downloading a bunch of junk that's not needed for a minimal build-from-source.
+    Option 3: Is there an option 3?
+
+Q-01.03: How does the pip installer handle the above situation?  I noticed `pip install rosie` doesn't result in a shared
+    library ending up anywhere in the link path.  Perhaps I should copy the pip approach, although Python is less suited
+    to building executables designed to be deployed in binary form (vs. Rust), so perhaps the Python approach won't suit
+    us here.
+
+Q-01.04:  I would like to have a crate version that references the librosie version, but I want a minor-digit to allow
+    for a revision to the rust crate without a revision to librosie, and unfortunately Cargo only supports 3-tupple
+    versions.  What would be the least-bad option for versioning the rust crates?
+
+Section 2, Pedantic Memory Safety Concerns
+
+Disclaimer: many questions in this section have obvious answers, but Rust teaches a person to be a stickler for memory
+correctness, so in many cases, I'm not necessarily asking about what LibRosie currently does, but instead I'm asking
+whether a contract exists such that no future change to librosie will change that behavior.
+
+(But also, in other cases, I didn't fully trace the code all the way through, so please pardon the ignorance on my part.)
+
+Q-02.01: I assume that calling `rosie_libpath` with a non-null string pointer will always result in the engine
+    fully-ingesting the path data, such that it will always be safe to free the string upon the return from
+    `rosie_libpath`.  Correct?
+
+Q-02.02: Same question as above, but for `rosie_compile` and the `expression` argument.  I assume I can free the buffer
+    containing the expression upon returning from `rosie_compile`.  Correct?
+
+Q-02.03: Same question as above, but for `rosie_match` and the `input` argument.  Can I safely assume that I can free
+    the `input` buffer upon this function returning, and neither the engine nor the match_result has taken any pointers
+    into the data from the `input` buffer?
+
+Q-02.04: Same question, but for `rosie_trace` and the `input` argument.  I want to be sure the returned `trace` buffer
+    will never be pointing back into the `input` buffer, nor will the engine retain any pointers into memory owned by
+    `input`.
+
+Q-02.05: Not really a question, but there appears to a bug in the implementation of rosie_compile.  *pat is set to 0
+    (line 590) before pat is checked against NULL (line 598), meaning that if the arg were null then the code already 
+    would have crashed before the check.  So the check is pointless.
+
+Q-02.06: How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
+    the memory so the client shouldn't free it.  But how long can the client depend on the pointer being valid?  Does
+    anything inside the engine cause these pointers to be freed or re-used?  Or does the engine just keep accreting
+    match result buffers until the engine itself is freed with `rosie_finalize`?
+
+Q-02.07: the code for `rosie_load` says "N.B. Client must free 'messages' ", but I spotted a few places where messages
+    was set using `rosie_new_string_from_const`, which means the pointer points to a static, and shouldn't be freed.
+    However, in the common case, the ptr gets its value from `rosie_new_string`, which does perform a malloc().
+    This issue exists in several places outside of `rosie_load` as well.
+
+Q-02.08: the comments above `rosie_load` & `rosie_loadfile` makes no mention of the client needing to free pkgname.
+    However, looking inside the function implementations, it appears that pkgname is allocated with rosie_new_string,
+    and not retained inside the engine, therefore, it appears that the caller should also be responsible for
+    deallocating 'pkgname'.  Did I miss something?
+
+Section 3, Behavior Clarifications
+
+Q-03.01: Why does librosie return 0 (SUCCESS) in certain failure situations?  Am I misunderstanding the purpose of the
+    error result code?  For example, I get success for:
+    * An invalid pattern syntax sent to `rosie_compile`
+    * text that fails to parse, sent to `rosie_load`
+    * The package specified to `rosie_import` doesn't exist
+    * The package.rpl file specified to `rosie_import` has a syntax error
+    * An invalid file path or other file system err (e.g. no access), in `rosie_loadfile`
+    * Syntax errors in the rpl file, opened with `rosie_loadfile`
+
+Q-03.02: What is the nicest way, in your opinion, to communicate a "no match" from the Rust equivalent of `rosie_match`?
+    As you know, `rosie_match` returns SUCCESS, but a NULL pointer in the match result data.  In Rust, NULL pointers
+    are not a thing, so I thought I'd create a "NoMatch" error code.  But "NoMatch" isn't really an error in the same
+    way that other errors are errors.  On the other hand, I don't want to bloat the function with another argument.
+    So, a "NoMatch" error is the cleanest interface, as long as it's conceptually ok.
+
+Q-03.03: What are the situations where a valid "messages" string is returned along-side a successful result?  I noticed
+    a comment saying this could happen, but I have never seen it.  The reason I ask is that I can roll the messages
+    argument inside the return error code, and simplify the API.  But it will mean there will be no way for the caller
+    to get the "messages" if the function sucessfully provided what it was invoked to provide.
+
+Q-03.04: How important is the `rosie_matchfile` entry point for a Rust-based API?  On the "pro" side, by handing the file
+    IO operations to librosie, librosie can presumably do a better job streaming the accesses than a naieve
+    implementation that read the whole input file into a buffer and called `rosie_match`.  On the "con" side, it seems
+    that there is little to be gained by calling this directly from Rust through a native interface, versus just
+    invoking the `rosie` cmd-line tool.  Am I misunderstanding the purpose of this entry point?
+
+Q-03.05: What is the intended use-case for the "as" argument to `rosie_import`?  Is there a situation where a user may
+    want to load a package under multiple names?  That would make sense if it were possible to extend packages and then you 
+    might wind up with the original package for compatibility and your extended version that you modified for your purpose.
+    But I'm unclear on how the "package extending" functionality would work.  Bascially, I'm asking why the `pkgname`
+    argument isn't always enough.
+
+Q-03.06: Along the same lines, why does `rosie_import` set `actual_pkgname` to `pkg_name` in the success case, instead of
+    to `as`?  Or why is this arg is even needed?  I.e. is there a case where librosie might create a brand new name, or
+    might sometimes return the `pkgname` and other times return `as` depending on some internal logic?
+
+Q-03.07: How should I think about the `start` index for `rosie_match` & `rosie_trace`?  It seems to be 1-based.  But what
+    does passing 0 signify conceptually?  Empirically, passing 0 just seems to mess everything up.
+    For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
+    character more than the pattern really matched.  If 0 has a conceptual meaning, I'd like to make sure it's documented
+    and tested.  And if 0 is never valid, I will check for it as an invalid argument. 
+
+Section 4, Documentation Questions
+
+Q-04.01: How should I describe the match_result.ttotal and match_result.tmatch in the documentation?  I see that they are
+    timing counters, but what operations, precisely, do they measure?
+
+Q-04.02: Where is the documentation for the `color` encoder, and specifically how to customize the colors associated with
+    each sub-expression?  I'd like to link to it from the Rust documentation.
+
+Q-04.03: Where is the documentation for implementing a custom encoder in Lua?  I'd like to link to it.  But I'd also like
+    to read it myself.
+
+Section 5, High-Level Interface Discussion
+
+This section outlines some places where, after using Rosie for the past 3 weeks or so, I have felt there are a few places
+where I wished I didn't have to type so much.  In addition, I've tried to recruit a few friends to use Rosie as well, and
+this captures some of their feedback about features they felt were missing or could be streamlined.  Of course these are
+just opinions, and opinions of people who aren't as knowledgeable about the subject as you are.  So please take them for
+what they are - possibly misguided ramblings of novices.
+
+That said, some of these ideas don't involve any changes to the librosie core, and can be nicely layered on top of the
+API as it already exists.  Others might need a small interface added, while some involve pushing features into rpl itself.
+
+Finally, it's entirely possible that the capability to do some of these things already exists, and I just haven't fully
+appreciated the flexibility of the interface as it is currently designed.  Please point out if this is the case.
+
+Q-05.01: Match-Result-paths.  Basically, I'm essentially imagining a convenience layer to access sub-matches for a
+    pattern.  The goal would be to provide a one-line call to extract the string matched by any nested sub-expression.
+    For example, if `date.any` matched some input, I might be able to extract the year using result-path: "any.slashed.year".
+    This could be implemented easily using an existing standard like JsonPath on top of the existing JSON match results,
+    but there may be an opportunity to do something cleaner, more powerful, or more appropriate to Rosie.
+
+Q-05.02: Wildcard Result-Paths. You don't have to go very far in the above direction before realizing that naieve
+    paths are not terribly useful unless you know exactly which sub-expressions are going to match.  And if you knew that,
+    you probably don't need the top-level expression at all.  So ideally there would be a way to get the year from a
+    `date.any` without knowing what format the input string was in.  Something along the lines of: "any.*.year"
+    Unfortunately this introduces ambiguity in the case where the same sub-pattern occurrs in multiple places , as caused
+    by a '*' in the original pattern.  I honestly don't have a good way to reconcile this but I think people will tolerate
+    some sharp edges if it lets them write one line of code instead of writing what previously took 5 lines.
+    
+Q-05.03: Greedy Widlcards. In the case of the `date.any` pattern, we know the year is always at the third level.
+    However, in some deeper patterns, we may not be sure precisely where the sub-expression we want will live.  So I'm
+    imagining a token that can find sub-expressions by name, along the lines of: "any.**.year", where the year
+    sub-expression would be found regardless of where it is nested.
+
+Q-05.04: Choice-Results. Sometimes the year is matched by the `year` sub-expression, but in other formats it is matched
+    by the `short_long_year`, and both roll up into `date.any`.  If we wanted to specify we wanted the "conceptual year",
+    we would need to say: "any.**.[year | short_long_year]"  (BTW, I'm sure my syntax choices are terrible, I'm just
+    making stuff up to express a concept.)
+
+Q-05.05: Pattern-Specific Encodings. Consider the `date` package.  The conceptual data of `month` may be represented by
+    any of `month` (which is numeric), but also `month_shortname`, `month_longname`, or `month_name`, which are all
+    various alpha strings.  It would be super-cool to be able to declare some kind of a unifying-expression that could
+    map "1", "January", and "Jan" back to the number 1.  It solves the "Choice" problem above, and allows the standard
+    pattern library to export a normalized interface for the matched data as well.  So, I could extract "numeric_month"
+    from the match results, and get "1", regardless of whether the input string said "Jan", "January", "1", or "01".
+
+Q-05.06: Inline Annonymous Sub-Expressions.  I was talking to a friend of mine about Rosie, and he said "I'll try
+    out Rosie when it can do this in one line: `let [x, digits, word2] = target.match(/^([\.0-9]+)-(\w+)$/);`"  (He's
+    a javascript programmer)  Anyway, it would be easy enough to layer together a high-level compile+match call, but
+    the part about defining what sub-expressions end up in which variable is something I don't know how to do with
+    Rosie unless the sub-expressions are named.  Do you think a syntax for inline-declared sub-expressions within the
+    same single-line pattern makes any sense for Rosie?  Or is it too far from Rosie's intended design philosophy?
+
+Q-05.07: Search & Replace. The "shape" of a search & replace function might depend on the answers to the above 6 points,
+    but S&R is super-useful capability, whatever form it takes.  This discussion can be postponed until later, as
+    the discussion has many dependencies on the match-access capabilities, and the rest is essentially just down to
+    creating an efficient implementation. 
+
+Q-05.08: Meta-Match-State: This idea is way out there, but I figured I'd throw it out.  Consider `date.any` again.
+    I know my example is flawed because there is no eur_dashed format, that would be analogous to the us_dashed format,
+    but imagine there were.  Now consider that modified data.any matching this sequence of values: 
+    "26-04-2017", "08-04-2017", etc.
+
+    In the example, the first item is unambiguously `eur_dashed`, because 26 is outside the range for month.  However,
+    the second item could be matched by either pattern, `eur_dashed` or `us_dashed`.  Because `us_dashed` is first in
+    the `date.any` choice list, that's the pattern that will match the second element.
+    
+    But what if we could perform the match as a two-pass operation, where the first pass determines the pattern choice
+    preferences to find a set of choices that work for all data elements, and the second pass then applies those
+    choices?
+
+    Admittedly, I haven't fully explored the implications of this, and there may be some hairball cases.  But the
+    idea is simply to allow some data elements to be useful in resolving ambiguity in other data elements from the
+    same data set. 
+
+Section 6, Misc
+
+Q-06.01: Do you know anybody who might be interested testing out / fixing the Rust crate on Windows?  I have been
+    developing on Mac OS & Linux, and can confirm both work as expected, but I don't have access to a Windows development
+    machine.
+
+Q-06.02: This is not related to Rust, but rather a question about the philosophy of the standard pattern library.  Does
+    the standard pattern library exist within a narrow purview to match formats as they are precisely specified,
+    i.e. defined patterns, for example rfc2822 for date formatting.
+    Or does the standard pattern library have room for patterns that are "The kind of thing a person might type when
+    attempting to represent a certain kind of value."  i.e. inherrently subjective patterns.
+    I wrestled with this question when I wrote the currency.rpl package. And it seems like a philosophical judgement call,
+    balancing convenience against potential ambiguity.
+    For example, it would be nice if "date.any" could sucessfully match: "Sat., Nov. 5, 1955", but then where to draw
+    the line?
+
+Q-06.03: The https://rosie-lang.org/ website would really benefit from having the RPL reference linked directly from the
+    sidebar, and having some simple "getting started" examples on the "examples" landing page, rather than links to find
+    the examples elsewhere.  I think this thread summarizes many people's unfortunate first impressions when approaching
+    Rosie: "https://news.ycombinator.com/item?id=21145755".  On the upside, it would be an easy thing to fix these
+    minor marketing / communication problems.
+
