@@ -40,8 +40,8 @@ Q-02.01: I assume that calling `rosie_libpath` with a non-null string pointer wi
     fully-ingesting the path data, such that it will always be safe to free the string upon the return from
     `rosie_libpath`.  Correct?
 
-Q-02.02: Same question as above, but for `rosie_compile` and the `expression` argument.  I assume I can free the buffer
-    containing the expression upon returning from `rosie_compile`.  Correct?
+Q-02.02: Same question as above, but for `rosie_compile` and the `expression` argument.  I assume the client can free
+    the buffer containing the expression upon returning from `rosie_compile`.  Correct?
 
 Q-02.03: Same question as above, but for `rosie_match` and the `input` argument.  Can I safely assume that I can free
     the `input` buffer upon this function returning, and neither the engine nor the match_result has taken any pointers
@@ -53,7 +53,7 @@ Q-02.04: Same question, but for `rosie_trace` and the `input` argument.  I want 
 
 Q-02.05: Not really a question, but there appears to a bug in the implementation of rosie_compile.  *pat is set to 0
     (line 590) before pat is checked against NULL (line 598), meaning that if the arg were null then the code already 
-    would have crashed before the check.  So the check is pointless.
+    would have crashed before the check.  So the check appears to be pointless unless I've misread something.
 
 Q-02.06: How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
     the memory so the client shouldn't free it.  But how long can the client depend on the pointer being valid?  Does
@@ -100,9 +100,9 @@ Q-03.04: How important is the `rosie_matchfile` entry point for a Rust-based API
 
 Q-03.05: What is the intended use-case for the "as" argument to `rosie_import`?  Is there a situation where a user may
     want to load a package under multiple names?  That would make sense if it were possible to extend packages and then you 
-    might wind up with the original package for compatibility and your extended version that you modified for your purpose.
-    But I'm unclear on how the "package extending" functionality would work.  Bascially, I'm asking why the `pkgname`
-    argument isn't always enough.
+    might wind up with the original package for compatibility and an extended version that is modified for a specific
+    purpose.  But I'm unclear on how the "package extending" functionality would work.  Bascially, I'm asking why the
+    `pkgname` argument isn't always enough.
 
 Q-03.06: Along the same lines, why does `rosie_import` set `actual_pkgname` to `pkg_name` in the success case, instead of
     to `as`?  Or why is this arg is even needed?  I.e. is there a case where librosie might create a brand new name, or
@@ -141,9 +141,10 @@ appreciated the flexibility of the interface as it is currently designed.  Pleas
 
 Q-05.01: Match-Result-paths.  Basically, I'm essentially imagining a convenience layer to access sub-matches for a
     pattern.  The goal would be to provide a one-line call to extract the string matched by any nested sub-expression.
-    For example, if `date.any` matched some input, I might be able to extract the year using result-path: "any.slashed.year".
+    For example, if `date.any` matched some input, I might be able to extract the year using something like:
+    `let year = match_result.extract_sub("any.slashed.year");`.
     This could be implemented easily using an existing standard like JsonPath on top of the existing JSON match results,
-    but there may be an opportunity to do something cleaner, more powerful, or more appropriate to Rosie.
+    but there may be an opportunity to do something cleaner, more powerful, or better-fitted to Rosie.
 
 Q-05.02: Wildcard Result-Paths. You don't have to go very far in the above direction before realizing that naieve
     paths are not terribly useful unless you know exactly which sub-expressions are going to match.  And if you knew that,
@@ -153,7 +154,7 @@ Q-05.02: Wildcard Result-Paths. You don't have to go very far in the above direc
     by a '*' in the original pattern.  I honestly don't have a good way to reconcile this but I think people will tolerate
     some sharp edges if it lets them write one line of code instead of writing what previously took 5 lines.
     
-Q-05.03: Greedy Widlcards. In the case of the `date.any` pattern, we know the year is always at the third level.
+Q-05.03: Recursive Widlcards. In the case of the `date.any` pattern, we know the year is always at the third level.
     However, in some deeper patterns, we may not be sure precisely where the sub-expression we want will live.  So I'm
     imagining a token that can find sub-expressions by name, along the lines of: "any.**.year", where the year
     sub-expression would be found regardless of where it is nested.
@@ -161,7 +162,8 @@ Q-05.03: Greedy Widlcards. In the case of the `date.any` pattern, we know the ye
 Q-05.04: Choice-Results. Sometimes the year is matched by the `year` sub-expression, but in other formats it is matched
     by the `short_long_year`, and both roll up into `date.any`.  If we wanted to specify we wanted the "conceptual year",
     we would need to say: "any.**.[year | short_long_year]"  (BTW, I'm sure my syntax choices are terrible, I'm just
-    making stuff up to express a concept.)
+    making stuff up to express a concept.)  Pretty quickly, it's becoming clear that we might a lot of the power of
+    Rosie to succinctly extract results from Rosie.  I don't know if that's a good thing or a bad thing.
 
 Q-05.05: Pattern-Specific Encodings. Consider the `date` package.  The conceptual data of `month` may be represented by
     any of `month` (which is numeric), but also `month_shortname`, `month_longname`, or `month_name`, which are all
@@ -169,6 +171,11 @@ Q-05.05: Pattern-Specific Encodings. Consider the `date` package.  The conceptua
     map "1", "January", and "Jan" back to the number 1.  It solves the "Choice" problem above, and allows the standard
     pattern library to export a normalized interface for the matched data as well.  So, I could extract "numeric_month"
     from the match results, and get "1", regardless of whether the input string said "Jan", "January", "1", or "01".
+
+    I know this a conceptual break from the match results as they currently are, however, because now the match results
+    from these special "encoding patterns" don't exist as subsets of the input string.  So I'm not sure what that does
+    for the rest of the design, if it throws everything into limbo.  But it would be a useful feature, and it could be
+    implemented in a layer on top of the core matching engine, if it's deeply incompatible with the rest of Rosie.
 
 Q-05.06: Inline Annonymous Sub-Expressions.  I was talking to a friend of mine about Rosie, and he said "I'll try
     out Rosie when it can do this in one line: `let [x, digits, word2] = target.match(/^([\.0-9]+)-(\w+)$/);`"  (He's
@@ -184,7 +191,7 @@ Q-05.07: Search & Replace. The "shape" of a search & replace function might depe
 
 Q-05.08: Meta-Match-State: This idea is way out there, but I figured I'd throw it out.  Consider `date.any` again.
     I know my example is flawed because there is no eur_dashed format, that would be analogous to the us_dashed format,
-    but imagine there were.  Now consider that modified data.any matching this sequence of values: 
+    but imagine there were.  Now consider that modified date.any matching this sequence of values: 
     "26-04-2017", "08-04-2017", etc.
 
     In the example, the first item is unambiguously `eur_dashed`, because 26 is outside the range for month.  However,
@@ -197,7 +204,8 @@ Q-05.08: Meta-Match-State: This idea is way out there, but I figured I'd throw i
 
     Admittedly, I haven't fully explored the implications of this, and there may be some hairball cases.  But the
     idea is simply to allow some data elements to be useful in resolving ambiguity in other data elements from the
-    same data set. 
+    same data set.  As if the match were creating a single mapping for the whole data-set and not an individual mapping
+    for each data element from the set.
 
 Section 6, Misc
 
