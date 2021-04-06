@@ -36,7 +36,7 @@
 //! let mut engine = RosieEngine::new(None).unwrap();
 //! engine.import_pkg("date", None, None);
 //! 
-//! let date_pat = engine.compile("date.us_long", None).unwrap();
+//! let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
 //! let match_result = engine.match_pattern(date_pat, 1, "Saturday, Nov 5, 1955").unwrap();
 //! ```
 //! 
@@ -136,7 +136,7 @@ impl RosieString<'_> {
 /// # use rosie_sys::*;
 /// # let mut engine = RosieEngine::new(None).unwrap();
 /// let mut message = RosieMessage::empty();
-/// engine.compile("invalid pattern", Some(&mut message));
+/// engine.compile_pattern("invalid pattern", Some(&mut message));
 /// println!("{}", message.as_str());
 /// ```
 
@@ -355,7 +355,7 @@ impl RosieEngine<'_> {
     /// 
     /// **NOTE**: The allocation limit allows the engine to allocate `new_limit` bytes **Above** the current memory usage.  For example,
     /// if the engine were currently using 3000 bytes, and you called this function with a `new_limit` value of 10000, then the engine
-    /// would be permitted to consume a total of 13000 bytes in total.
+    /// would be permitted to consume 13000 bytes in total.
     /// 
     /// **NOTE**: This function will panic if the `new_limit` argument is higher than 2GB.
     pub fn set_mem_alloc_limit(&self, new_limit : usize) -> Result<(), RosieError> {
@@ -410,16 +410,16 @@ impl RosieEngine<'_> {
     /// # use rosie_sys::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile("date.us_long", None).unwrap();
+    /// let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
     /// ```
     /// 
     /// ```
     /// # use rosie_sys::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
-    /// let two_digit_year_pat = engine.compile("{[012][0-9]}", None).unwrap();
+    /// let two_digit_year_pat = engine.compile_pattern("{[012][0-9]}", None).unwrap();
     /// ```
     /// 
-    pub fn compile(&mut self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<PatternID, RosieError> {
+    pub fn compile_pattern(&mut self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<PatternID, RosieError> {
 
         let mut pat_idx : i32 = 0;
         let mut message_buf = RosieString::empty();
@@ -450,7 +450,7 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    /// Frees a pattern that was previously compiled with [compile](RosieEngine::compile).
+    /// Frees a pattern that was previously compiled with [compile_pattern](RosieEngine::compile_pattern).
     pub fn free_pattern(&mut self, pattern_id : PatternID) -> Result<(), RosieError> {
         let result_code = unsafe { rosie_free_rplx(self.copy_self(), pattern_id.0) };
 
@@ -540,7 +540,7 @@ impl RosieEngine<'_> {
     /// # use rosie_sys::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile("date.any", None).unwrap();
+    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
     /// 
     /// let mut trace = RosieMessage::empty();
     /// let did_match = engine.trace_pattern(date_pat, 1, "Sat. Nov. 5, 1955", &mut trace).unwrap();
@@ -662,14 +662,14 @@ impl RosieEngine<'_> {
     /// # use rosie_sys::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile("date.any", None).unwrap();
+    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
     /// ```
     /// With an alias:
     /// ```
     /// # use rosie_sys::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", Some("special_date"), None);
-    /// let date_pat = engine.compile("special_date.any", None).unwrap();
+    /// let date_pat = engine.compile_pattern("special_date.any", None).unwrap();
     /// ```
     /// 
     
@@ -713,7 +713,7 @@ impl RosieEngine<'_> {
 
 /// An index that identifies a compiled pattern within a [RosieEngine].
 /// 
-/// PatternIDs are created by [compile](RosieEngine::compile), and the patterns they represent can be freed with [free_pattern](RosieEngine::free_pattern).
+/// PatternIDs are created by [compile_pattern](RosieEngine::compile_pattern), and the patterns they represent can be freed with [free_pattern](RosieEngine::free_pattern).
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct PatternID(i32);
 
@@ -882,20 +882,20 @@ fn rosie_engine() {
     let _ = engine.mem_usage().unwrap();
 
     //Compile a valid rpl pattern, and confirm there is no error
-    let pat_idx = engine.compile("{[012][0-9]}", None).unwrap();
+    let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
 
     //Make sure we can sucessfully free the pattern
     assert!(engine.free_pattern(pat_idx).is_ok());
     
     //Try to compile an invalid pattern (syntax error), and check the error and error message
     let mut message = RosieMessage::empty();
-    let compile_result = engine.compile("year = bogus", Some(&mut message));
+    let compile_result = engine.compile_pattern("year = bogus", Some(&mut message));
     assert!(compile_result.is_err());
     assert!(message.len() > 0);
     //println!("{}", message.as_str());
 
     //Recompile a pattern expression and match it against a matching input
-    let pat_idx = engine.compile("{[012][0-9]}", None).unwrap();
+    let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
     //Q-03.07 QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up.
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
@@ -929,16 +929,16 @@ fn rosie_engine() {
     assert_eq!(pkg_name.as_str(), "net");
 
     //Test importing a package with an alias
-    let mut message = RosieMessage::empty();//TODO, messages are unnecessary in this test.  I'm just confused by the API behavior
+    //let mut message = RosieMessage::empty();//TODO, messages are unnecessary in this test.  I'm just confused by the API behavior
     let _pkg_name = engine.import_pkg("char", Some("characters"), Some(&mut message)).unwrap();
-    println!("{}", message.as_str());
+    //println!("{}", message.as_str());
     //Q-03.06 QUESTION FOR A ROSIE EXPERT.  What does the "as" argument to rosie_import actually do?
     //assert_eq!(pkg_name.as_str(), "characters");
 
     //ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
 
     //Test matching a pattern with some recursive sub-patterns
-    let date_pat_idx = engine.compile("date.us_long", None).unwrap();
+    let date_pat_idx = engine.compile_pattern("date.us_long", None).unwrap();
     let match_result = engine.match_pattern(date_pat_idx, 1, "Saturday, Nov 5, 1955").unwrap();
     assert_eq!(match_result.pat_name_str(), "us_long");
     assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
