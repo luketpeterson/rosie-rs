@@ -46,7 +46,7 @@ use std::ptr;
 use std::slice;
 use std::slice::Iter;
 use std::str;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 
 extern crate libc;
@@ -482,7 +482,8 @@ impl RosieEngine<'_> {
     ///     #[serde(rename = "e")]
     ///     end : usize, // The offset of the end of the match in the input buffer
     ///     data : String, // The matched text, copied from the input buffer
-    ///     subs : Option<Vec<JSONMatchResult>> // The sub-matches within the pattern
+    ///     #[serde(default = "Vec::new")]
+    ///     subs : Vec<JSONMatchResult> // The sub-matches within the pattern
     /// }
     /// 
     /// let mut engine = RosieEngine::new(None).unwrap();
@@ -514,12 +515,12 @@ impl RosieEngine<'_> {
     /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
     /// 
     /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
-    pub fn match_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str) -> Result<MatchResult, RosieError> {
+    pub fn match_pattern<'input>(&mut self, pattern_id : PatternID, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
         
         let raw_match_result = self.match_pattern_raw(pattern_id, start, input, &MatchEncoder::Byte)?;
                 
         if raw_match_result.did_match() {
-            Ok(MatchResult::from_byte_match_result(raw_match_result))
+            Ok(MatchResult::from_byte_match_result(input, raw_match_result))
         } else {
             //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
             //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
@@ -782,38 +783,129 @@ impl RawMatchResult<'_> {
 //I don't think rosie-sys should depend on serde, but also, there is a lot more we can do to make the
 //results friendlier to consume for the API client.
 
+//A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
+//TODO: Roll this out into a stand-along crate
+#[derive(Debug)]
+enum MaybeOwnedString<'a> {
+    Owned(String),
+    Borrowed(&'a str),
+}
+
+impl MaybeOwnedString<'_> {
+    pub fn as_str(&self) -> &str {
+        match self {
+            MaybeOwnedString::Owned(the_string) => the_string.as_str(),
+            MaybeOwnedString::Borrowed(the_str) => the_str
+        }
+    }
+}
+
 /// Represents the results of a match operation, performed by [match_pattern](RosieEngine::match_pattern)
 /// 
 /// **TODO** Need better documentation here, but I feel like this belongs in the higher-level crate, and
 /// I believe a more caller-friendly interface is possible.
 /// 
 #[derive(Debug)]
-pub struct MatchResult {
+pub struct MatchResult<'a> {
     pat_name : String,
     start : usize,
     end : usize,
-    data : String,
-    subs : Option<Box<Vec<MatchResult>>>
+    data : MaybeOwnedString<'a>,
+    subs : Vec<MatchResult<'a>>
 }
 
-impl MatchResult {
-    fn from_byte_match_result(src_result : RawMatchResult) -> Self {
+impl MatchResult<'_> {
 
-        println!("What's Up Doc!!!!!! GOAT");
-        for the_byte in src_result.data.as_bytes().iter() {
-            println!("{}", the_byte);
-        }
-        println!("Abadee that's all folks!!!!! GOAT");
+    //This function is a port from the python code here: https://gitlab.com/rosie-community/clients/python/-/blob/master/rosie/decode.py
+    fn from_bytes_buffer<'input>(input : &'input str, match_buffer : &mut &[u8], existing_start_pos : Option<usize>) -> MatchResult<'input> {
 
-        let new_result = MatchResult{
-            pat_name : "*".to_string(),
-            start : 1,
-            end : 3,
-            data : "21".to_string(),
-            subs : None
+        //If we received a start position, it is because we are in the middle of a recursive call stack
+        let start_position = match existing_start_pos {
+            Some(start_position) => start_position,
+            None => {
+                //Otherwise, Read the first 4 bytes, interpret them as a signed little-endian 32 bit integer,
+                //  and then negate them to get the start position
+                let (start_pos_chars, remainder) = match_buffer.split_at(4);
+                *match_buffer = remainder;
+                let signed_start_pos = i32::from_le_bytes(start_pos_chars.try_into().unwrap());
+                assert!(signed_start_pos < 0);
+                usize::try_from(signed_start_pos * -1).unwrap()
+            }
+        };
+        
+        //Read the next 2 bytes, interpret them as a signed little-endian 16 but integer,
+        let (type_len_chars, remainder) = match_buffer.split_at(2);
+        *match_buffer = remainder;
+        let mut type_len = i16::from_le_bytes(type_len_chars.try_into().unwrap()); //The length of the pattern name
+
+        //constant-capture means data is a user-provided string, (i.e. a string from the encoder)
+        //Otherwise regular-capture means data is a subset of the input string
+        let constant_capture = if type_len < 0 {
+            type_len = type_len * -1;
+            true
+        } else {
+            false
+        };
+        
+        //Read type_len characters, intperpreting it as the pattern name
+        let (type_name_chars, remainder) = match_buffer.split_at(usize::try_from(type_len).unwrap());
+        *match_buffer = remainder;
+        let pattern_name = String::from_utf8(type_name_chars.to_vec()).unwrap();
+
+        //Get the data out of the match_buffer, or the input string, depending on whether the pattern is "constant-capture" or not
+        let mut data = if constant_capture {
+            let (data_len_chars, remainder) = match_buffer.split_at(2);
+            *match_buffer = remainder;
+            let data_len = i16::from_le_bytes(data_len_chars.try_into().unwrap()); //The length of the data name
+            assert!(data_len >= 0);
+
+            let (data_chars, remainder) = match_buffer.split_at(usize::try_from(data_len).unwrap());
+            *match_buffer = remainder;
+            MaybeOwnedString::Owned(String::from_utf8(data_chars.to_vec()).unwrap())
+        } else {
+            let (_, match_data) = input.split_at(start_position-1);
+            MaybeOwnedString::Borrowed(match_data)
         };
 
-        new_result
+        //The empty array for our sub-patterns.
+        let mut subs = Vec::new();
+        
+        //Read the next 4 bytes, and interpret them as a little-endian signed int.  It it's negative, then
+        //that means we negate it to get the pattern end, and recurse this function because we have sub-matches.
+        //If the number is positive, then we have come to the end of this sub-pattern array
+        let end_position;
+        loop {
+            let (next_pos_chars, remainder) = match_buffer.split_at(4);
+            *match_buffer = remainder;
+            let signed_next_pos = i32::from_le_bytes(next_pos_chars.try_into().unwrap());
+            
+            if signed_next_pos < 0 {
+                let next_position = usize::try_from(signed_next_pos * -1).unwrap();
+                let sub_match = MatchResult::from_bytes_buffer(input, match_buffer, Some(next_position));
+                subs.push(sub_match);
+            } else {
+                end_position = usize::try_from(signed_next_pos).unwrap();
+                break;
+            }
+        }
+
+        //If we have a borrowed data pointer, cut its length at the appropriate place
+        if let MaybeOwnedString::Borrowed(match_data) = data {
+            let (new_data_ref, _) = match_data.split_at(end_position - start_position);
+            data = MaybeOwnedString::Borrowed(new_data_ref);
+        }
+        
+        MatchResult{
+            pat_name : pattern_name,
+            start : start_position,
+            end : end_position,
+            data : data,
+            subs : subs
+        }
+    }
+    fn from_byte_match_result<'input>(input : &'input str, src_result : RawMatchResult) -> MatchResult<'input> {
+        let mut data_buf_ref = src_result.data.as_bytes();
+        MatchResult::from_bytes_buffer(input, &mut data_buf_ref, None)
     }
     pub fn pat_name_str(&self) -> &str {
         self.pat_name.as_str()
@@ -828,18 +920,11 @@ impl MatchResult {
         self.end
     }
     pub fn sub_pat_count(&self) -> usize {
-        match &self.subs {
-            Some(subs_vec) => subs_vec.len(),
-            None => 0
-        }
+        self.subs.len()
     }
     pub fn sub_pat_iter(&self) -> Iter<'_, MatchResult> {
-        match &self.subs {
-            Some(subs_vec) => subs_vec.iter(),
-            None => [].iter()
-        }
+        self.subs.iter()
     }
-
 }
 
 //Interfaces to the raw librosie functions
@@ -961,8 +1046,6 @@ fn rosie_engine() {
     assert_eq!(match_result.end(), 3);
     assert_eq!(match_result.sub_pat_count(), 0);
 
-panic!();
-
     //Try it against non-matching input, and make sure we get the appropriate error
     assert!(engine.match_pattern(pat_idx, 1, "99").is_err());
 
@@ -992,7 +1075,7 @@ panic!();
     //Q-03.06 QUESTION FOR A ROSIE EXPERT.  What does the "as" argument to rosie_import actually do?
     //assert_eq!(pkg_name.as_str(), "characters");
 
-    //ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
+    //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
 
     //Test matching a pattern with some recursive sub-patterns
     let date_pat_idx = engine.compile_pattern("date.us_long", None).unwrap();
@@ -1072,8 +1155,8 @@ panic!();
 //
 //√ Validate that the match_pattern_raw doesn't allow the engine to be accessed while the RawMatchResult is still outstanding
 //
-//3.) Implement "match_pattern" in terms of "match_pattern_raw", using the "byte" encoder
-//  Make sure to move serde_json out of the Cargo dependencies after I do this
+//√3.) Implement "match_pattern" in terms of "match_pattern_raw", using the "byte" encoder
+//√  Make sure to move serde_json out of the Cargo dependencies after I do this
 //
 //4.) Update the RosieQuestions list with the stuff I learned from chat w/ Jamie.
 //

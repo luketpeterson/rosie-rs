@@ -186,6 +186,9 @@ Q-05.05: Pattern-Specific Encodings. Consider the `date` package.  The conceptua
     for the rest of the design, if it throws everything into limbo.  But it would be a useful feature, and it could be
     implemented in a layer on top of the core matching engine, if it's deeply incompatible with the rest of Rosie.
 
+    UPDATE: I see from looking in the Python 'byte' decoder code, that "constant capture" patterns are already a thing,
+    so perhaps this won't be as fundamental as I had feared.
+
 Q-05.06: Inline Annonymous Sub-Expressions.  I was talking to a friend of mine about Rosie, and he said "I'll try
     out Rosie when it can do this in one line: `let [x, digits, word2] = target.match(/^([\.0-9]+)-(\w+)$/);`"  (He's
     a javascript programmer)  Anyway, it would be easy enough to layer together a high-level compile+match call, but
