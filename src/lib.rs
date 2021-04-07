@@ -255,6 +255,28 @@ impl MatchEncoder {
     }
 }
 
+/// A format for debugging output, to be used with [trace_pattern](RosieEngine::trace_pattern).
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub enum TraceFormat {
+    /// The complete trace data, formatted as JSON 
+    JSON,
+    /// The complete trace data, formatted in a multi-line human-readable format
+    Full,
+    /// Redacted trace data, containing only the parts of the expression most useful for understanding why a
+    /// pattern failed to match, presented in a multi-line human-readable format
+    Condensed
+}
+
+impl TraceFormat {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            TraceFormat::JSON => b"json\0",
+            TraceFormat::Full => b"full\0",
+            TraceFormat::Condensed => b"condensed\0"
+        }
+    }
+}
+
 /// The Rust object representing a Rosie engine.  
 /// 
 /// **NOTE**: RosieEngines are not internally thread-safe, but you may create more than one RosieEngine in order to use multiple threads.
@@ -544,6 +566,10 @@ impl RosieEngine<'_> {
     /// Returns a bool indicating whether the specified pattern matched the input.  The caller must allocate an empty [RosieMessage]
     /// in order to receive the resulting trace information.
     /// 
+    /// The caller must also pass a [TraceFormat], to specify the format for the resulting information.
+    /// [Condensed](TraceFormat::Condensed) is the most human-readable format, but a other formats may contain more complete
+    /// information or be easier to automatically parse.
+    /// 
     /// # Example
     /// ```
     /// # use rosie_sys::*;
@@ -552,13 +578,11 @@ impl RosieEngine<'_> {
     /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
     /// 
     /// let mut trace = RosieMessage::empty();
-    /// let did_match = engine.trace_pattern(date_pat, 1, "Sat. Nov. 5, 1955", &mut trace).unwrap();
+    /// let did_match = engine.trace_pattern(date_pat, 1, "Sat. Nov. 5, 1955", TraceFormat::Condensed, &mut trace).unwrap();
     /// println!("{}", trace.as_str());
     /// ```
     /// 
-    pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str, trace : &mut RosieMessage) -> Result<bool, RosieError> {
-
-        //TODO: We should probably take the trace format as an argument
+    pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
 
         //Q-02.04 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
         //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
@@ -570,7 +594,7 @@ impl RosieEngine<'_> {
         trace.0.manual_drop(); //We'll be overwriting whatever string was already there
 
         //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
-        let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), "condensed\0".as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
+        let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), format.as_bytes().as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
 
         if result_code == 0 {
             if matched == 1 {
@@ -775,7 +799,7 @@ impl RawMatchResult<'_> {
     //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
     //It feels like uninitialized memory or something might be influencing the run.
 
-    //GOATGOATGOAT, New RosieQuestion about the abend field.  How to expose that to the user??
+    //Q-03.08: QUESTION FOR A ROSIE EXPERT about the abend field.  How to expose that to the user??
 }
 
 //Discussion about MatchResult vs. RawMatchResult.
@@ -1051,7 +1075,7 @@ fn rosie_engine() {
 
     //Test the trace function, and make sure we get a reasonable result
     let mut trace = RosieMessage::empty();
-    assert!(engine.trace_pattern(pat_idx, 1, "21", &mut trace).is_ok());
+    assert!(engine.trace_pattern(pat_idx, 1, "21", TraceFormat::Condensed, &mut trace).is_ok());
     //println!("{}", trace.as_str());
 
     //Test loading a package from a string
@@ -1094,69 +1118,9 @@ fn rosie_engine() {
 }
 
 //More LibRosie questions:
-//
-//1. Should I do more on the lifecycle management of PatternIDs?
-//  In particular, would it be better to automatically free them when they go out of scope rather than giving the
-//  user the API call to do it manually?
-//  INTERNAL NOTE: Implementing the DROP trait on a PatternID means the PatternID needs to borrow its engine,
-//  which currently isn't possible except through a back-door, because we still need calls that can make mutable
-//  borrows of the engine, such as match and compiling new patterns.
-//  Also, I still want the patternIDs to be clonable, so I'd also have to make them capable of ref-counting.
-//
-//  Kinda a can-of-worms, but possible worth it because it simplifies the UI quite a lot.
-//
-//  If we go in this direction, I'd also consider changing match and trace to be methods of the Pattern, rather
-//  than methods of the Engine.
-//
-//  Implementing this would make the Rust wrapper around RosieEngine a bit fatter because I'd have to handle the
-//  case where the Engine was dropped while patterns were outstanding.  I'm thinking the Engine object just becomes
-//  an ref-counted pointer to the raw C engine object, and then each pattern belonging to an engine gets a pointer
-//  as well.  So even if the engine is destroyed, the patterns keep it alive in memory until they are all freed.
-//
-//  I need to understand the mechanics around ownership of the match_result.data.ptr, however.  Because I need to
-//  make sure that pointer can't outlive the buffer it points into.
-//
-//  Fattening the engine object would also give me the opportunity
-//  to put a pattern-cache in front of "compile", so the same pattern isn't compiled multiple times, for example
-//  if the user wanted to do `engine.compile_pattern("constant expression")?.match_pattern(text_from_loop)`,
-//  in a loop.
-//
-//2. What kind of things are rc files used for?  Is there an example or documentation?
-//  I'm working on the assumption that I can skip this functionality for the Rust crate because we probably don't want
-//  user-specified configuration overriding the behavior the app developer intended.
-//
-//3. Figure out how the "byte" encoder works.
-//
-//  Where is the "Byte" encoding format documented?
-//  Looking at the "byte" encoder output, it appears the start index is 16 bits.  Which is probably not good given the
-//  64KB upper bound before overflow
-//
-//
-//4. Understand the difference between an expression and a "block", as in the last 6 native functions I haven't tried yet
+//1. Understand the difference between an expression and a "block", as in the last 6 native functions I haven't tried yet
 //  my hypothesis is that a block is a bunch of patterns in the form "name = expression", and an expression is a single
 //  pattern, or a single pattern name.
 //
-//5. Understand the meaning of "deps", "refs" & "parsetree"s, as they're used in the last 6 functions I'm not calling.
-//
-
-//TODO:
-//
-//√1.) Implement "match_pattern_raw" that takes an encoding format, and outputs a native "raw_match_result"
-//√      Make sure the returned raw match result takes a mutable borrow of the engine, so nothing can happen to the engine
-//√      when the match results are still alive
-//
-//√ 2.) Update documentation for "match_pattern_raw", explaining the mutable borrow of the engine
-//√  Add documentation on using serde_json to parse the results from match_pattern_raw
-//
-//√ The "RawMatchResult" object will need the following functions:
-//√      did_match, match_data_as_str, match_data_as_bytes, the timing getters,
-//
-//√ Document RawMatchResult structure and all its functions
-//
-//√ Validate that the match_pattern_raw doesn't allow the engine to be accessed while the RawMatchResult is still outstanding
-//
-//√3.) Implement "match_pattern" in terms of "match_pattern_raw", using the "byte" encoder
-//√  Make sure to move serde_json out of the Cargo dependencies after I do this
-//
-//4.) Update the RosieQuestions list with the stuff I learned from chat w/ Jamie.
+//2. Understand the meaning of "deps", "refs" & "parsetree"s, as they're used in the last 6 functions I'm not calling.
 //

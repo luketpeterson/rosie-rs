@@ -123,7 +123,15 @@ Q-03.07: How should I think about the `start` index for `rosie_match` & `rosie_t
     character more than the pattern really matched.  If 0 has a conceptual meaning, I'd like to make sure it's documented
     and tested.  And if 0 is never valid, I will check for it as an invalid argument. 
 
-Section 4, Documentation Questions
+Q-03.08: How should the `abend` field of the match result data be exposed to the client?  If its meaning is
+    encoder-specific, is there any documentation I can reference?
+
+Q-03.09: What kind of things are rc files used for?  Is there an example or documentation?
+    I'm working on the assumption that I can skip this functionality for the Rust crate because we probably don't want
+    user-specified configuration overriding the behavior the app developer intended when they incorporated Rosie as a
+    component inside their program.
+
+Section 4, Rust-level API Aesthetics & Documentation Questions
 
 Q-04.01: How should I describe the match_result.ttotal and match_result.tmatch in the documentation?  I see that they are
     timing counters, but what operations, precisely, do they measure?
@@ -133,6 +141,33 @@ Q-04.02: Where is the documentation for the `color` encoder, and specifically ho
 
 Q-04.03: Where is the documentation for implementing a custom encoder in Lua?  I'd like to link to it.  But I'd also like
     to read it myself.
+
+Q-04.04: I'm starting to feel that I should rethink the lifecycle management of PatternID objects in the Rust interface.
+    In particular, would it be better to automatically free them when they go out of scope rather than giving the
+    user the API call to do it manually?
+
+    LP IMPLEMENTATION NOTE: Implementing the `Drop` trait on a PatternID means the PatternID needs to have a reference
+    to its engine, which isn't possible to do directly because we still need calls that have mutable (and therefore
+    exclusive) access to the engine.  We could implement a back-door to keep this access, but it would come
+    with an additional runtime validity check each time the pattern is accessed, to make sure the engine is still
+    valid.
+
+    Also, I still want the patternIDs to be clonable, so I'd also have to make them capable of ref-counting.
+
+    Possibly a small can-of-worms, but perhaps worth it because it simplifies the UI quite a lot by not requiring the
+    client to worry about freeing compiled patterns they are no longer using.
+
+Q-04.05: If we go in the direction above, I'd also consider changing match and trace to be methods of the Pattern,
+    rather than methods of the Engine.  So basically, from the client's perspective, the engine creates patterns, and
+    the patterns are what are used to match and trace.
+
+    Unfortunately, the fact that the match buffer is owned by the engine might complicate things from the user's
+    perspective.  If librosie could give us a separate buffer per pattern would make this cleaner.  Otherwise, I'd
+    say this change would make the API worse, not better.  Thoughts?
+    
+Q-04.06: Does it make any sense to put a pattern-cache in front of "compile", so the same pattern isn't compiled
+    multiple times?  Basically checking the string against strings that have already been compiled.  This might pave
+    the way towards a high-level compile + match call that could be called in a loop without horrible performance.
 
 Section 5, High-Level Interface Discussion
 
