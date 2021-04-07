@@ -213,10 +213,7 @@ impl RosieError {
     }
 }
 
-/// An Encoder Module used to format the results from a match call, such as [match_pattern](RosieEngine::match_pattern).
-/// 
-/// **NOTE**: Currently this isn't used as [RosieEngine::match_pattern] goes straight to the high-level match result.
-/// This will be changed imminently, however.
+/// An Encoder Module used to format the results, when using [match_pattern_raw](RosieEngine::match_pattern_raw).
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum MatchEncoder {
     /// The simplest and fastest encoder.  Outputs `true` if the pattern matched and `false` otherwise.
@@ -461,6 +458,41 @@ impl RosieEngine<'_> {
         }
     }
 
+    /// Matches the specified `pattern_id` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
+    /// 
+    /// Returns a [RawMatchResult] or an error code if a problem was encountered.  This is a lower-level API than [match_pattern](RosieEngine::match_pattern),
+    /// and there are two situations where you might want to use it:
+    /// - If you want to the output from a particular [MatchEncoder]
+    /// - If you need the fastest possible match performance, using the [Bool](MatchEncoder::Bool) encoder
+    /// 
+    /// **NOTE**: The returned [RawMatchResult] takes a mutable borrow of the `engine`, and thus the engine cannot be accessed
+    /// while the RawMatchResult is in use.  Copying the data from the RawMatchResult will allow the `engine` to be released.
+    /// 
+    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
+    /// 
+    /// # Example using the JSON encoder with serde_json
+    /// ```
+    /// extern crate serde_json;
+    /// use serde::{*};
+    /// use rosie_sys::*;
+    /// 
+    /// #[derive(Debug, Deserialize)]
+    /// struct JSONMatchResult {
+    ///     #[serde(rename = "type")]
+    ///     pat_name : String, // The pattern that was matched
+    ///     #[serde(rename = "s")]
+    ///     start : usize, // The offset of the start of the match in the input buffer
+    ///     #[serde(rename = "e")]
+    ///     end : usize, // The offset of the end of the match in the input buffer
+    ///     data : String, // The matched text, copied from the input buffer
+    ///     subs : Option<Box<Vec<JSONMatchResult>>> // The sub-matches within the pattern
+    /// }
+    /// 
+    /// let mut engine = RosieEngine::new(None).unwrap();
+    /// let pat_id = engine.compile_pattern("{[012][0-9]}", None).unwrap();
+    /// let raw_result = engine.match_pattern_raw(pat_id, 1, "21", &MatchEncoder::JSON).unwrap();
+    /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
+    /// ```
     pub fn match_pattern_raw<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
 
         //Q-02.03 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
@@ -472,16 +504,11 @@ impl RosieEngine<'_> {
 
         let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
 
-        //Q-04.01: QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
-        //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
-        //It feels like uninitialized memory or something might be influencing the run.
-
         //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
         //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
         //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
         //the current code does, is not a very friendly interface
         
-        //GOAT, Actually, we want a slightly different validity check here.
         if result_code == 0 {
             Ok(match_result)
         } else {
@@ -489,24 +516,12 @@ impl RosieEngine<'_> {
         }
     }
 
-    //Q-02.06 QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the engine.
-    //Is this right?  Therefore, the input string could be safely deallocated and the match buffer would still be fine, but if
-    //the engine were deallocated then the match result would point to freed memory?  Is this right, or do I need to make sure
-    //the input string's buffer isn't deallocated while the match result is still in use?
-    //UPDATE: It's a moot point for now because Serde ends up copying the whole match result into a local buffer.  However, 
-    // that may not always be the case, and it's obviously inefficient to perform needless copying.  It would be good to
-    // understand this better, and remove the copy in the future. (and remove serde as well!)
-    //
-    //TODO: This function should be factored into a low-level and a high-level counterpart.
-    //This low-level side should take a MatchEncoder argument, and output the "RawMatchResult" structure (which should
-    //also be renamed to "MatchResult" after we have a new name for the high-level result structure)
-
     /// Matches the specified `pattern_id` in the specified `input` string, beginning from the `start` index.
     /// 
     /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
     /// 
     /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
-    pub fn match_pattern(&self, pattern_id : PatternID, start : usize, input : &str) -> Result<MatchResult, RosieError> {
+    pub fn match_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str) -> Result<MatchResult, RosieError> {
         
         //Q-02.03 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
         //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
@@ -737,6 +752,10 @@ impl RosieEngine<'_> {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct PatternID(i32);
 
+/// A structure containing the match results from a [match_pattern_raw](RosieEngine::match_pattern_raw) call.
+/// 
+/// **NOTE**: A RawMatchResult takes a mutable borrow of a [RosieEngine], and thus renders the engine inaccessible
+/// while the RawMatchResult is in use.  Copying the data from the RawMatchResult will allow the `engine` to be released.
 #[repr(C)]
 #[derive(Debug)]
 pub struct RawMatchResult<'a> {
@@ -748,6 +767,7 @@ pub struct RawMatchResult<'a> {
 }
 
 impl RawMatchResult<'_> {
+    //Private
     fn empty() -> Self {
         Self {
             data: RosieString::empty(),
@@ -757,6 +777,7 @@ impl RawMatchResult<'_> {
             tmatch: 0
         }
     }
+    //Returns `true` if the pattern was matched in the input, otherwise returns `false`.
     pub fn did_match(&self) -> bool {
         if self.data.is_valid() {
             return true;
@@ -765,9 +786,22 @@ impl RawMatchResult<'_> {
         if self.data.len() == 1 {
             return true;
         }
-
         false
     }
+    //Returns the raw buffer, outputted by the encoder during the match operation
+    pub fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+    //Returns the match buffer, interpreted as a UTF-8 string
+    pub fn as_str(&self) -> &str {
+        self.data.as_str()
+    }
+    //TODO: Add getters for timing values in the structure
+    //Q-04.01: QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
+    //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
+    //It feels like uninitialized memory or something might be influencing the run.
+
+    //GOATGOATGOAT, New RosieQuestion about the abend field.  How to expose that to the user??
 }
 
 //Discussion about MatchResult vs. RawMatchResult.
@@ -952,11 +986,11 @@ fn rosie_engine() {
     assert_eq!(raw_match_result.did_match(), true);
 
     //Now try the match with the high-level match_pattern call
-    let match_result = engine.match_pattern(pat_idx, 1, "2121").unwrap();
+    let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
     assert_eq!(match_result.pat_name_str(), "*");
-    assert_eq!(match_result.matched_str(), "2121");
+    assert_eq!(match_result.matched_str(), "21");
     assert_eq!(match_result.start(), 1);
-    assert_eq!(match_result.end(), 5);
+    assert_eq!(match_result.end(), 3);
     assert_eq!(match_result.sub_pat_count(), 0);
 
     //Try it against non-matching input, and make sure we get the appropriate error
@@ -1054,19 +1088,22 @@ fn rosie_engine() {
 
 //TODO:
 //
-//1.) Implement "match_pattern_raw" that takes an encoding format, and outputs a native "raw_match_result"
-//      Make sure the returned raw match result takes a mutable borrow of the engine, so nothing can happen to the engine
-//      when the match results are still alive
+//√1.) Implement "match_pattern_raw" that takes an encoding format, and outputs a native "raw_match_result"
+//√      Make sure the returned raw match result takes a mutable borrow of the engine, so nothing can happen to the engine
+//√      when the match results are still alive
 //
-//2.) Update documentation for "match_pattern_raw", explaining the mutable borrow of the engine
-//  Add documentation on using serde_json to parse the results from match_pattern_raw
+//√ 2.) Update documentation for "match_pattern_raw", explaining the mutable borrow of the engine
+//√  Add documentation on using serde_json to parse the results from match_pattern_raw
 //
-// The "RawMatchResult" object will need the following functions:
-//      did_match, match_data_as_str, match_data_as_bytes, the timing getters, 
+//√ The "RawMatchResult" object will need the following functions:
+//√      did_match, match_data_as_str, match_data_as_bytes, the timing getters,
 //
-// Validate that the match_pattern_raw doesn't allow the engine to be accessed while the RawMatchResult is still outstanding
+//√ Document RawMatchResult structure and all its functions
+//
+//√ Validate that the match_pattern_raw doesn't allow the engine to be accessed while the RawMatchResult is still outstanding
 //
 //3.) Implement "match_pattern" in terms of "match_pattern_raw", using the "byte" encoder
+//  Make sure to move serde_json out of the Cargo dependencies after I do this
 //
 //4.) Update the RosieQuestions list with the stuff I learned from chat w/ Jamie.
 //

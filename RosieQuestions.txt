@@ -55,10 +55,19 @@ Q-02.05: Not really a question, but there appears to a bug in the implementation
     (line 590) before pat is checked against NULL (line 598), meaning that if the arg were null then the code already 
     would have crashed before the check.  So the check appears to be pointless unless I've misread something.
 
-Q-02.06: How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
+Q-02.06: <<<<----ANSWERED---->>>>  How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
     the memory so the client shouldn't free it.  But how long can the client depend on the pointer being valid?  Does
     anything inside the engine cause these pointers to be freed or re-used?  Or does the engine just keep accreting
     match result buffers until the engine itself is freed with `rosie_finalize`?
+
+    Answer: The buffer is reused with each call to rosie_match.  This design choice was made to reduce malloc / free
+    overhead in situations where rosie_match is called repeatedly in a loop.  For the Rust interface, this means the
+    RawMatchResult structure will take a mutable borrow of the engine, preventing any engine access while the
+    RawMatchResult is alive.
+
+    In the future, an API that allows the buffer to be retained by the client may be advantageous for performance
+    in situations where the client wants to keep multiple match result buffers around without copying them.  This
+    is not the common use case however.
 
 Q-02.07: the code for `rosie_load` says "N.B. Client must free 'messages' ", but I spotted a few places where messages
     was set using `rosie_new_string_from_const`, which means the pointer points to a static, and shouldn't be freed.
