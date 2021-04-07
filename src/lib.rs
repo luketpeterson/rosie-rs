@@ -52,9 +52,6 @@ use std::ffi::CString;
 extern crate libc;
 use libc::{size_t, c_void};
 
-extern crate serde_json;
-use serde::{*};
-
 //---Discussion about RosieString (rstr in librosie)---
 //Strings in librose can either be allocated by the librosie library or allocated by the client.  The buffer containing
 //the actual bytes therefore must be freed or not freed depending on knowledge of where the string came from.  This
@@ -505,11 +502,6 @@ impl RosieEngine<'_> {
 
         let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
 
-        //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
-        //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
-        //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
-        //the current code does, is not a very friendly interface
-        
         if result_code == 0 {
             Ok(match_result)
         } else {
@@ -524,36 +516,16 @@ impl RosieEngine<'_> {
     /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
     pub fn match_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str) -> Result<MatchResult, RosieError> {
         
-        //Q-02.03 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
-        //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
-        //must change.
-        let input_rosie_string = RosieString::from_str(input);
-
-        let encoder = MatchEncoder::JSON; //TODO: We should take the encoder as an argument
-        //GOAT, no, we should call through to match_pattern_raw
-
-        let mut match_result = RawMatchResult::empty();
-
-        //TODO: Better encoder integration with Rust
-        //DISCUSSION: Temporarily we are using the JSON encoder for the results.  However, there are certainly better options.
-        //For most languages, the sensible thing is to go straight into native language types.  Unfortunately Rust's typing
-        //system is too rigid to do this easily.
-        //Option 1. Serde marries Rust's type system with an abstract deserialization process in the best manner possible.
-        //  Rosie could be integrated as a Serde deserialization format.  I am against this approach, however, because A tight
-        //  coupling between the rust strctures and the rosie patterns would be required.  This would be very hard to use and
-        //  even harder to debug.  Also, it defeats some of the point of the flexibility of Rosie.
-        //Option 2. A flexible value type, along the lines of serde_json::value::Value.  This is probably the most expedient
-        //  stop-gap, but ultimately working with these is tedious as there is a lot of type-checking code needed all over the
-        //  place.
-        //Option 3. A high-level result-description mechanism.  This is a more ambitious proposal that may require buy-in from
-        //  the core Rosie team.  But I think it would provide the most elegant and useful integration possibilities.
-        
-        let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
-
-        if result_code == 0 && match_result.data.is_valid() {
-            Ok(MatchResult::from_raw_match_result(&match_result))
+        let raw_match_result = self.match_pattern_raw(pattern_id, start, input, &MatchEncoder::Byte)?;
+                
+        if raw_match_result.did_match() {
+            Ok(MatchResult::from_byte_match_result(raw_match_result))
         } else {
-            Err(RosieError::from(result_code))
+            //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
+            //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
+            //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
+            //the current code does, is not a very friendly interface
+            Err(RosieError::MiscErr)
         }
     }
     //Q-03.04: QUESTION FOR A ROSIE EXPERT
@@ -815,37 +787,32 @@ impl RawMatchResult<'_> {
 /// **TODO** Need better documentation here, but I feel like this belongs in the higher-level crate, and
 /// I believe a more caller-friendly interface is possible.
 /// 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct MatchResult {
-    #[serde(rename = "type")]
-    /// Sometimes called "type"
     pat_name : String,
-    #[serde(rename = "s")]
     start : usize,
-    #[serde(rename = "e")]
     end : usize,
     data : String,
     subs : Option<Box<Vec<MatchResult>>>
 }
 
 impl MatchResult {
-    //GOAT, this function should operate on a "bytes" buffer, so its name should reflect that
-    fn from_raw_match_result(src_result : &RawMatchResult) -> Self {
+    fn from_byte_match_result(src_result : RawMatchResult) -> Self {
 
-        // println!("What's Up Doc!!!!!! GOAT");
-        // for the_byte in src_result.data.as_bytes().iter() {
-        //     println!("{}", the_byte);
-        // }
-        // println!("Abadee that's all folks!!!!! GOAT");
+        println!("What's Up Doc!!!!!! GOAT");
+        for the_byte in src_result.data.as_bytes().iter() {
+            println!("{}", the_byte);
+        }
+        println!("Abadee that's all folks!!!!! GOAT");
 
-        // let new_result = MatchResult{
-        //     pat_name : "*".to_string(),
-        //     start : 1,
-        //     end : 2,
-        //     data : "Boris".to_string(),
-        //     subs : None
-        // };
-        let new_result = serde_json::from_slice(src_result.data.as_bytes()).unwrap();
+        let new_result = MatchResult{
+            pat_name : "*".to_string(),
+            start : 1,
+            end : 3,
+            data : "21".to_string(),
+            subs : None
+        };
+
         new_result
     }
     pub fn pat_name_str(&self) -> &str {
@@ -993,6 +960,8 @@ fn rosie_engine() {
     assert_eq!(match_result.start(), 1);
     assert_eq!(match_result.end(), 3);
     assert_eq!(match_result.sub_pat_count(), 0);
+
+panic!();
 
     //Try it against non-matching input, and make sure we get the appropriate error
     assert!(engine.match_pattern(pat_idx, 1, "99").is_err());
