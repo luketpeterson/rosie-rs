@@ -461,6 +461,34 @@ impl RosieEngine<'_> {
         }
     }
 
+    pub fn match_pattern_raw<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
+
+        //Q-02.03 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
+        //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
+        //must change.
+        let input_rosie_string = RosieString::from_str(input);
+        
+        let mut match_result = RawMatchResult::empty();
+
+        let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
+
+        //Q-04.01: QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
+        //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
+        //It feels like uninitialized memory or something might be influencing the run.
+
+        //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
+        //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
+        //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
+        //the current code does, is not a very friendly interface
+        
+        //GOAT, Actually, we want a slightly different validity check here.
+        if result_code == 0 {
+            Ok(match_result)
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+
     //Q-02.06 QUESTION FOR A ROSIE EXPERT.  I assume that the string inside the match results points to memory managed by the engine.
     //Is this right?  Therefore, the input string could be safely deallocated and the match buffer would still be fine, but if
     //the engine were deallocated then the match result would point to freed memory?  Is this right, or do I need to make sure
@@ -470,7 +498,7 @@ impl RosieEngine<'_> {
     // understand this better, and remove the copy in the future. (and remove serde as well!)
     //
     //TODO: This function should be factored into a low-level and a high-level counterpart.
-    //This low-level side should take a MatchEncoder argument, and output the "InternalMatchResult" structure (which should
+    //This low-level side should take a MatchEncoder argument, and output the "RawMatchResult" structure (which should
     //also be renamed to "MatchResult" after we have a new name for the high-level result structure)
 
     /// Matches the specified `pattern_id` in the specified `input` string, beginning from the `start` index.
@@ -486,8 +514,9 @@ impl RosieEngine<'_> {
         let input_rosie_string = RosieString::from_str(input);
 
         let encoder = MatchEncoder::JSON; //TODO: We should take the encoder as an argument
+        //GOAT, no, we should call through to match_pattern_raw
 
-        let mut match_result = InternalMatchResult::empty();
+        let mut match_result = RawMatchResult::empty();
 
         //TODO: Better encoder integration with Rust
         //DISCUSSION: Temporarily we are using the JSON encoder for the results.  However, there are certainly better options.
@@ -505,17 +534,8 @@ impl RosieEngine<'_> {
         
         let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
 
-        //Q-04.01: QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
-        //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
-        //It feels like uninitialized memory or something might be influencing the run.
-        
-        //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
-        //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
-        //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
-        //the current code does, is not a very friendly interface
-
         if result_code == 0 && match_result.data.is_valid() {
-            Ok(MatchResult::from_internal_match_result(&match_result))
+            Ok(MatchResult::from_raw_match_result(&match_result))
         } else {
             Err(RosieError::from(result_code))
         }
@@ -719,7 +739,7 @@ pub struct PatternID(i32);
 
 #[repr(C)]
 #[derive(Debug)]
-struct InternalMatchResult<'a> {
+pub struct RawMatchResult<'a> {
     data: RosieString<'a>,
     leftover: i32,
     abend: i32,
@@ -727,8 +747,8 @@ struct InternalMatchResult<'a> {
     tmatch: i32
 }
 
-impl InternalMatchResult<'_> {
-    pub fn empty() -> Self {
+impl RawMatchResult<'_> {
+    fn empty() -> Self {
         Self {
             data: RosieString::empty(),
             leftover: 0,
@@ -737,9 +757,20 @@ impl InternalMatchResult<'_> {
             tmatch: 0
         }
     }
+    pub fn did_match(&self) -> bool {
+        if self.data.is_valid() {
+            return true;
+        }
+        //The "bool" encoder returns 1 in the len field to indicate a match, even if the ptr is NULL
+        if self.data.len() == 1 {
+            return true;
+        }
+
+        false
+    }
 }
 
-//Discussion about MatchResult vs. InternalMatchResult.
+//Discussion about MatchResult vs. RawMatchResult.
 //This object Belongs at a higher level, in the "rosie" crate, rather than the "rosie-sys" crate.
 //I don't think rosie-sys should depend on serde, but also, there is a lot more we can do to make the
 //results friendlier to consume for the API client.
@@ -763,7 +794,22 @@ pub struct MatchResult {
 }
 
 impl MatchResult {
-    fn from_internal_match_result(src_result : &InternalMatchResult) -> Self {
+    //GOAT, this function should operate on a "bytes" buffer, so its name should reflect that
+    fn from_raw_match_result(src_result : &RawMatchResult) -> Self {
+
+        // println!("What's Up Doc!!!!!! GOAT");
+        // for the_byte in src_result.data.as_bytes().iter() {
+        //     println!("{}", the_byte);
+        // }
+        // println!("Abadee that's all folks!!!!! GOAT");
+
+        // let new_result = MatchResult{
+        //     pat_name : "*".to_string(),
+        //     start : 1,
+        //     end : 2,
+        //     data : "Boris".to_string(),
+        //     subs : None
+        // };
         let new_result = serde_json::from_slice(src_result.data.as_bytes()).unwrap();
         new_result
     }
@@ -812,7 +858,7 @@ extern "C" {
     fn rosie_config(e : RosieEngine, retvals : *mut RosieString) -> i32;// int rosie_config(Engine *e, str *retvals);
     fn rosie_compile(e : RosieEngine, expression : *const RosieString, pat : *mut i32, messages : *mut RosieString) -> i32; // int rosie_compile(Engine *e, str *expression, int *pat, str *messages);
     fn rosie_free_rplx(e : RosieEngine, pat : i32) -> i32; // int rosie_free_rplx(Engine *e, int pat);
-    fn rosie_match(e : RosieEngine, pat : i32, start : i32, encoder : *const u8, input : *const RosieString, match_result : *mut InternalMatchResult) -> i32; // int rosie_match(Engine *e, int pat, int start, char *encoder, str *input, match *match);
+    fn rosie_match(e : RosieEngine, pat : i32, start : i32, encoder : *const u8, input : *const RosieString, match_result : *mut RawMatchResult) -> i32; // int rosie_match(Engine *e, int pat, int start, char *encoder, str *input, match *match);
     //fn rosie_matchfile(e : RosieEngine, pat : i32, encoder : *const u8, wholefileflag : i32, infilename : *const u8, outfilename : *const u8, errfilename : *const u8, cin : *mut i32, cout : *mut i32, cerr : *mut i32, err : *mut RosieString); // int rosie_matchfile(Engine *e, int pat, char *encoder, int wholefileflag, char *infilename, char *outfilename, char *errfilename, int *cin, int *cout, int *cerr, str *err);
     fn rosie_trace(e : RosieEngine, pat : i32, start : i32, trace_style : *const u8, input : *const RosieString, matched : &mut i32, trace : *mut RosieString) -> i32; // int rosie_trace(Engine *e, int pat, int start, char *trace_style, str *input, int *matched, str *trace);
     fn rosie_load(e : RosieEngine, ok : *mut i32, rpl_text : *const RosieString, pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_load(Engine *e, int *ok, str *src, str *pkgname, str *messages);
@@ -894,16 +940,23 @@ fn rosie_engine() {
     assert!(message.len() > 0);
     //println!("{}", message.as_str());
 
-    //Recompile a pattern expression and match it against a matching input
-    let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
+    //Recompile a pattern expression and match it against a matching input using match_pattern_raw
     //Q-03.07 QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up.
     //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
     //  character more than the pattern really matched
-    let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
+    let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
+    let raw_match_result = engine.match_pattern_raw(pat_idx, 1, "21", &MatchEncoder::Bool).unwrap();
+    //Validate that we can't access the engine while our raw_match_result is in use.
+    //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
+    // assert!(engine.config_as_json().is_ok());
+    assert_eq!(raw_match_result.did_match(), true);
+
+    //Now try the match with the high-level match_pattern call
+    let match_result = engine.match_pattern(pat_idx, 1, "2121").unwrap();
     assert_eq!(match_result.pat_name_str(), "*");
-    assert_eq!(match_result.matched_str(), "21");
+    assert_eq!(match_result.matched_str(), "2121");
     assert_eq!(match_result.start(), 1);
-    assert_eq!(match_result.end(), 3);
+    assert_eq!(match_result.end(), 5);
     assert_eq!(match_result.sub_pat_count(), 0);
 
     //Try it against non-matching input, and make sure we get the appropriate error
@@ -952,3 +1005,68 @@ fn rosie_engine() {
     assert!(sub_match_pat_names.contains(&"year"));
 
 }
+
+//More LibRosie questions:
+//
+//1. Should I do more on the lifecycle management of PatternIDs?
+//  In particular, would it be better to automatically free them when they go out of scope rather than giving the
+//  user the API call to do it manually?
+//  INTERNAL NOTE: Implementing the DROP trait on a PatternID means the PatternID needs to borrow its engine,
+//  which currently isn't possible except through a back-door, because we still need calls that can make mutable
+//  borrows of the engine, such as match and compiling new patterns.
+//  Also, I still want the patternIDs to be clonable, so I'd also have to make them capable of ref-counting.
+//
+//  Kinda a can-of-worms, but possible worth it because it simplifies the UI quite a lot.
+//
+//  If we go in this direction, I'd also consider changing match and trace to be methods of the Pattern, rather
+//  than methods of the Engine.
+//
+//  Implementing this would make the Rust wrapper around RosieEngine a bit fatter because I'd have to handle the
+//  case where the Engine was dropped while patterns were outstanding.  I'm thinking the Engine object just becomes
+//  an ref-counted pointer to the raw C engine object, and then each pattern belonging to an engine gets a pointer
+//  as well.  So even if the engine is destroyed, the patterns keep it alive in memory until they are all freed.
+//
+//  I need to understand the mechanics around ownership of the match_result.data.ptr, however.  Because I need to
+//  make sure that pointer can't outlive the buffer it points into.
+//
+//  Fattening the engine object would also give me the opportunity
+//  to put a pattern-cache in front of "compile", so the same pattern isn't compiled multiple times, for example
+//  if the user wanted to do `engine.compile_pattern("constant expression")?.match_pattern(text_from_loop)`,
+//  in a loop.
+//
+//2. What kind of things are rc files used for?  Is there an example or documentation?
+//  I'm working on the assumption that I can skip this functionality for the Rust crate because we probably don't want
+//  user-specified configuration overriding the behavior the app developer intended.
+//
+//3. Figure out how the "byte" encoder works.
+//
+//  Where is the "Byte" encoding format documented?
+//  Looking at the "byte" encoder output, it appears the start index is 16 bits.  Which is probably not good given the
+//  64KB upper bound before overflow
+//
+//
+//4. Understand the difference between an expression and a "block", as in the last 6 native functions I haven't tried yet
+//  my hypothesis is that a block is a bunch of patterns in the form "name = expression", and an expression is a single
+//  pattern, or a single pattern name.
+//
+//5. Understand the meaning of "deps", "refs" & "parsetree"s, as they're used in the last 6 functions I'm not calling.
+//
+
+//TODO:
+//
+//1.) Implement "match_pattern_raw" that takes an encoding format, and outputs a native "raw_match_result"
+//      Make sure the returned raw match result takes a mutable borrow of the engine, so nothing can happen to the engine
+//      when the match results are still alive
+//
+//2.) Update documentation for "match_pattern_raw", explaining the mutable borrow of the engine
+//  Add documentation on using serde_json to parse the results from match_pattern_raw
+//
+// The "RawMatchResult" object will need the following functions:
+//      did_match, match_data_as_str, match_data_as_bytes, the timing getters, 
+//
+// Validate that the match_pattern_raw doesn't allow the engine to be accessed while the RawMatchResult is still outstanding
+//
+//3.) Implement "match_pattern" in terms of "match_pattern_raw", using the "byte" encoder
+//
+//4.) Update the RosieQuestions list with the stuff I learned from chat w/ Jamie.
+//
