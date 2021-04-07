@@ -485,12 +485,13 @@ impl RosieEngine<'_> {
     ///     #[serde(rename = "e")]
     ///     end : usize, // The offset of the end of the match in the input buffer
     ///     data : String, // The matched text, copied from the input buffer
-    ///     subs : Option<Box<Vec<JSONMatchResult>>> // The sub-matches within the pattern
+    ///     subs : Option<Vec<JSONMatchResult>> // The sub-matches within the pattern
     /// }
     /// 
     /// let mut engine = RosieEngine::new(None).unwrap();
-    /// let pat_id = engine.compile_pattern("{[012][0-9]}", None).unwrap();
-    /// let raw_result = engine.match_pattern_raw(pat_id, 1, "21", &MatchEncoder::JSON).unwrap();
+    /// engine.import_pkg("date", None, None);
+    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
+    /// let raw_result = engine.match_pattern_raw(date_pat, 1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
     /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
     /// ```
     pub fn match_pattern_raw<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
