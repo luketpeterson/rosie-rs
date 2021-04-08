@@ -12,7 +12,9 @@ extern crate cc;
 //
 //TODO: It would be nice if this crate could support a static link option for librosie, as well as an option to pull
 //  and build librosie from source.  It is unclear how best to implement that, given the dependencies of rosie on lua, etc.
-
+//
+//Kornel's reference guide to creating sys crates: https://kornel.ski/rust-sys-crate
+//
 fn main() {
 
     //First, see if we can locate the library using pkg_config
