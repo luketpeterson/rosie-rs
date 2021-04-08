@@ -895,8 +895,9 @@ impl MatchResult<'_> {
         let mut subs = Vec::new();
         
         //Read the next 4 bytes, and interpret them as a little-endian signed int.  It it's negative, then
-        //that means we negate it to get the pattern end, and recurse this function because we have sub-matches.
-        //If the number is positive, then we have come to the end of this sub-pattern array
+        //that means we negate it to get the start of the next sub-match, and call ourselves recursively to.
+        //continue parsing the sub-match.  If the number is positive, then we have come to the end of this
+        //sub-pattern array, so the number is the end position of this pattern.
         let end_position;
         loop {
             let (next_pos_chars, remainder) = match_buffer.split_at(4);
