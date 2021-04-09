@@ -19,6 +19,20 @@ Q-01.02: What is the best way to build librosie from within Cargo (the rust code
         source?  `git clone` ends up downloading a bunch of junk that's not needed for a minimal build-from-source.
     Option 3: Is there an option 3?
 
+    UPDATE: Kornel believes that a Rust Crate should contain its own source, and that means a sys crate should contain the
+    source for the library it links.  The cargo crate should not install in a shared location, and keep all of its build
+    products in the temporary cargo directory.  In addition, the cargo build process should not require a network
+    connection.
+
+    Kornel's reference guide to creating sys crates: https://kornel.ski/rust-sys-crate
+
+    Unfortunately, rosie's Makefile requires the following packages on top of vanilla ubuntu: libreadline-dev, libbsd-dev,
+
+    I haven't investigated what these libraries do inside of librosie, but I have a suspicion libreadline is for the repl
+    shell, so perhaps the best course of action is to refactor the rosie build itself to remove that dependency from a
+    "library-only" build.  Perhaps the stdio functionality from libbsd could be wrapped at compile-time with a shim
+    to make it use the platform-native io functions, rather than requiring the libbsd library to be installed.
+
 Q-01.03: How does the pip installer handle the above situation?  I noticed `pip install rosie` doesn't result in a shared
     library ending up anywhere in the link path.  Perhaps I should copy the pip approach, although Python is less suited
     to building executables designed to be deployed in binary form (vs. Rust), so perhaps the Python approach won't suit
@@ -27,6 +41,8 @@ Q-01.03: How does the pip installer handle the above situation?  I noticed `pip 
 Q-01.04:  I would like to have a crate version that references the librosie version, but I want a minor-digit to allow
     for a revision to the rust crate without a revision to librosie, and unfortunately Cargo only supports 3-tupple
     versions.  What would be the least-bad option for versioning the rust crates?
+
+Q-01.05: What is the name / server for the rosie ubuntu package?
 
 Section 2, Pedantic Memory Safety Concerns
 

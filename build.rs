@@ -8,13 +8,15 @@ extern crate cc;
 //Currently, this crate links to a version of the shared librosie library that is already installed on the system.
 //  It will fail to build if librosie cannot be found.
 //
-//TODO: Test on Linux, Test on Windows
+//TODO: Test on Windows
 //
 //TODO: It would be nice if this crate could support a static link option for librosie, as well as an option to pull
 //  and build librosie from source.  It is unclear how best to implement that, given the dependencies of rosie on lua, etc.
 //
 //Kornel's reference guide to creating sys crates: https://kornel.ski/rust-sys-crate
 //
+//Q-01.02 QUESTION FOR A ROSIE EXPERT
+
 fn main() {
 
     //First, see if we can locate the library using pkg_config

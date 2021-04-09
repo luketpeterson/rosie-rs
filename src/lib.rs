@@ -12,7 +12,7 @@
 //! Complete installation info is [here](https://gitlab.com/rosie-pattern-language/rosie#local-installation).
 //! However, Rosie is probably available through your package-manager of choice.  For example, you may run any of the following:
 //! 
-//! * `apt-get install rosie`
+//! * `apt-get install rosie`  Q-01.05 QUESTION FOR A ROSIE EXPERT: What is the name / server for the rosie ubuntu package?
 //! * `dnf install rosie`
 //! * `brew install rosie`
 //! 
