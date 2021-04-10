@@ -336,8 +336,6 @@ impl RosieEngine<'_> {
     /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as any other operations that load rpl code using the `import` directive.
     pub fn set_lib_path(&mut self, new_path : &str) -> Result<(), RosieError> {
 
-        //Q-02.01 QUESTION FOR A ROSIE EXPERT.  I assume this path is fully ingested and it is safe to free the string buffer after
-        //this function returns.  If not, I will need to change this function
         let mut path_rosie_string = RosieString::from_str(new_path);
 
         let result_code = unsafe { rosie_libpath(self.copy_self(), &mut path_rosie_string) };
@@ -399,7 +397,6 @@ impl RosieEngine<'_> {
     }
     //PUNT. QUESTION: Does it make sense to parse this json into a structure that's easier to query?  The API client can parse
     //it easily enough, so probably better to keep the crate dependencies lower.
-    //NOTE: I've got a dependency on Serde JSON anyway, in order to parse match results.  However, I hope to remove that soon.
     /// Returns a [RosieMessage] containing a JSON-formatted structure of Rosie configuration parameters.
     pub fn config_as_json(&self) -> Result<RosieMessage, RosieError> {
 
@@ -438,9 +435,6 @@ impl RosieEngine<'_> {
         let mut pat_idx : i32 = 0;
         let mut message_buf = RosieString::empty();
 
-        //Q-02.02 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the expression, and it is
-        //safe to deallocate the expression string when this function returns?  I am assuming yes, but if not, this code
-        //must change.
         let expression_rosie_string = RosieString::from_str(expression);
 
         let result_code = unsafe { rosie_compile(self.copy_self(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
@@ -452,9 +446,6 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
         
-        //Q-02.05 QUESTION FOR A ROSIE EXPERT.  There appears to a bug in the implementation of rosie_compile.
-        //*pat is set to 0 before pat is checked against NULL, meaning that if it were null the code already would have crashed
-        //  before the check.  So the check is pointless.
         //Q-03.01 QUESTION FOR A ROSIE EXPERT.  Why is it that an invalid pattern syntax will result in a Success result code, even if
         //  the returned pattern index is 0?  I don't want invalid PatternIDs to be possible in Rust, therefore, I'm also
         //  checking the pattern index against 0.  Am I misunderstanding the librosie interface?
@@ -514,9 +505,6 @@ impl RosieEngine<'_> {
     /// ```
     pub fn match_pattern_raw<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
 
-        //Q-02.03 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
-        //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
-        //must change.
         let input_rosie_string = RosieString::from_str(input);
         
         let mut match_result = RawMatchResult::empty();
@@ -582,9 +570,6 @@ impl RosieEngine<'_> {
     /// 
     pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
 
-        //Q-02.04 QUESTION FOR A ROSIE EXPERT.  Is it safe to assume that the engine will fully ingest the input, and it is
-        //safe to deallocate the expression string after this function returns?  I am assuming yes, but if not, this code
-        //must change.
         let input_rosie_string = RosieString::from_str(input);
 
         let mut matched : i32 = -1;
@@ -604,19 +589,12 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    //Q-02.07 QUESTION FOR A ROSIE EXPERT: the code for rosie_load says "N.B. Client must free 'messages' ", but I spotted a few places where
-    //messages was set using `rosie_new_string_from_const`, which means the pointer points to a static, and shouldn't be freed.
-    //I think this is a bug that must be fixed in librosie because there is no way that a client of librosie can know whether a
-    //messages buffer is freeable except by duplicating the logic of librosie.
-    //Q-02.08 QUESTION FOR A ROSIE EXPERT.  In addition, the comment makes no mention of pkgname.  However, looking inside the function implementation, it appears that
-    //pkgname is allocated with rosie_new_string, and not retained inside the engine, therefore, it appears that the caller is also
-    //responsible for deallocating 'pkgname'.  Did I miss something?
     
     /// Loads a package of `rpl` patterns from the spcified text.
     /// 
     /// Returns a [RosieMessage] containing the name of the package that was loaded.
     /// 
-    /// **NOTE**: The specified text must contain a `package` directive, to provide the name of the package in the pattern namespace.
+    /// **NOTE**: The specified text must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
     pub fn load_pkg_from_str(&mut self, rpl_text : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
         
@@ -643,16 +621,12 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    //Q-02.08 QUESTION FOR A ROSIE EXPERT: the code for rosie_loadfile says "N.B. Client must free 'messages' ", but it makes no mention of
-    //pkgname.  However, looking inside the function implementation, it appears that pkgname is allocated with rosie_new_string, and
-    //not retained inside the engine, therefore, it appears that the caller is also responsible for deallocating 'pkgname'.  Did I
-    //miss something?
 
     /// Loads a package of `rpl` patterns from the spcified file.
     /// 
     /// Returns a [RosieMessage] containing the name of the package that was loaded.
     /// 
-    /// **NOTE**: The file must contain a `package` directive, to provide the name of the package in the pattern namespace.
+    /// **NOTE**: The file must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
     pub fn load_pkg_from_file(&mut self, file_name : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
@@ -1010,6 +984,10 @@ fn rosie_string() {
     //Now test that we can safely deallocate the heap-allocated String that we used to create a RosieMessage
     drop(hello_string);
     assert!(rosie_message.is_valid());
+
+    let mut rosie_string = RosieString::from_str("I'm static");
+    rosie_string.manual_drop();
+
 }
 
 #[test]

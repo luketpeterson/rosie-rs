@@ -180,48 +180,168 @@ whether a contract exists such that no future change to librosie will change tha
 
 (But also, in other cases, I didn't fully trace the code all the way through, so please pardon the ignorance on my part.)
 
-Q-02.01: I assume that calling `rosie_libpath` with a non-null string pointer will always result in the engine
-    fully-ingesting the path data, such that it will always be safe to free the string upon the return from
-    `rosie_libpath`.  Correct?
+Q-02.01: <<<<----CLOSED, Nothing to do---->>>> I assume that calling `rosie_libpath` with a non-null string pointer
+    will always result in the engine fully-ingesting the path data, such that it will always be safe to free the string
+    upon the return from `rosie_libpath`.  Correct?
 
-Q-02.02: Same question as above, but for `rosie_compile` and the `expression` argument.  I assume the client can free
-    the buffer containing the expression upon returning from `rosie_compile`.  Correct?
+    Jamie said:
+        Yes.  The lua_pushlstring() copies the string for us.  I should document this. 
 
-Q-02.03: Same question as above, but for `rosie_match` and the `input` argument.  Can I safely assume that I can free
-    the `input` buffer upon this function returning, and neither the engine nor the match_result has taken any pointers
-    into the data from the `input` buffer?
+Q-02.02: <<<<----CLOSED, Nothing to do---->>>> Same question as above, but for `rosie_compile` and the `expression`
+    argument.  I assume the client can free the buffer containing the expression upon returning from `rosie_compile`.
+    Correct?
 
-Q-02.04: Same question, but for `rosie_trace` and the `input` argument.  I want to be sure the returned `trace` buffer
-    will never be pointing back into the `input` buffer, nor will the engine retain any pointers into memory owned by
-    `input`.
+    Jamie said:
+        Yes.  The lua_pushlstring() copies the string for us.  I should document this.
 
-Q-02.05: Not really a question, but there appears to a bug in the implementation of rosie_compile.  *pat is set to 0
-    (line 590) before pat is checked against NULL (line 598), meaning that if the arg were null then the code already 
-    would have crashed before the check.  So the check appears to be pointless unless I've misread something.
+Q-02.03: <<<<----CLOSED, Nothing to do---->>>> Same question as above, but for `rosie_match` and the `input` argument.
+    Can I safely assume that I can free the `input` buffer upon this function returning, and neither the engine nor the
+    match_result has taken any pointers into the data from the `input` buffer?
 
-Q-02.06: <<<<----CLOSED, ANSWERED---->>>>  How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
-    the memory so the client shouldn't free it.  But how long can the client depend on the pointer being valid?  Does
-    anything inside the engine cause these pointers to be freed or re-used?  Or does the engine just keep accreting
-    match result buffers until the engine itself is freed with `rosie_finalize`?
+    Jamie said:
+        Yes.  The librosie functions do not keep any references to the `input`
+        buffer.  And currently, we do not modify the input buffer at all.  There's a
+        an optimization we're considering for the future in which we would modify
+        the `input`, btw, but I what we should so is create an alternative
+        rosie_match API that you can call if you're ok with us mangling the input
+        buffer.  (We can, in that case, restore it on return to the caller, if the
+        caller needs that, but meanwhile thread safety has left the building.)
 
-    Answer: The buffer is reused with each call to rosie_match.  This design choice was made to reduce malloc / free
-    overhead in situations where rosie_match is called repeatedly in a loop.  For the Rust interface, this means the
-    RawMatchResult structure will take a mutable borrow of the engine, preventing any engine access while the
-    RawMatchResult is alive.
+    Luke said:
+        As long as the alternate API has a different entry point, Rust can hapily work with that 'modifying' API.
+        In fact, it will even enforce that the no other threads are relying on the memory not changing while the
+        call is in-flight.  Rust is careful like that.
 
-    In the future, an API that allows the buffer to be retained by the client may be advantageous for performance
-    in situations where the client wants to keep multiple match result buffers around without copying them.  This
-    is not the common use case however.
+Q-02.04: <<<<----CLOSED, Nothing to do---->>>> Same question, but for `rosie_trace` and the `input` argument.  I want
+    to be sure the returned `trace` buffer will never be pointing back into the `input` buffer, nor will the engine
+    retain any pointers into memory owned by `input`.
 
-Q-02.07: the code for `rosie_load` says "N.B. Client must free 'messages' ", but I spotted a few places where messages
-    was set using `rosie_new_string_from_const`, which means the pointer points to a static, and shouldn't be freed.
-    However, in the common case, the ptr gets its value from `rosie_new_string`, which does perform a malloc().
-    This issue exists in several places outside of `rosie_load` as well.
+    Jamie said:
+        Right.  The `rosie_trace` code makes little attempt to be efficient.  It
+        copies the input buffer (using lua_pushlstring()) before it gets started,
+        and it returns a newly allocated copy of `trace` when it's done.
 
-Q-02.08: the comments above `rosie_load` & `rosie_loadfile` makes no mention of the client needing to free pkgname.
-    However, looking inside the function implementations, it appears that pkgname is allocated with rosie_new_string,
-    and not retained inside the engine, therefore, it appears that the caller should also be responsible for
-    deallocating 'pkgname'.  Did I miss something?
+        Details about `trace` buffer: When tracing succeeds, it returns a string
+        containing a representation of what happened during matching.  At
+        librosie.c:928 we obtain a pointer to that string using lua_tolstring().
+        The string itself is managed by Lua (which will gc it eventually), so we use
+        rosie_new_string() to make a copy of it to return to the caller.  The caller
+        is then responsible for freeing the `trace` return value if the call to
+        rosie_trace succeeded.
+
+        On reflection, perhaps a better approach here would be to ask the caller to
+        free `trace` if it's non-null?  This situation could be problematic: Caller
+        to `rosie_trace` provides non-null `trace` pointer (could be uninitialized
+        or worse, the only pointer to an allocation); the call to rosie_trace fails,
+        in which case the `trace` arg is has the same value upon return.  The caller
+        should NOT free `trace` in this case.
+
+    Luke said:
+        For the Rust crate, it's a non-issue because we always pass a NULL ptr into rosie_trace(),
+        and the cleanup code is smart about (not) deallocating null pointers when finished.  All of
+        that stuff is abstracted away from the user of the Rust crate anyway, and it's isolated as
+        part of the interface where Rust meets C.
+
+        In general, however, asking the user to free the pointer conditionally, depending on whether
+        the trace was sucessful might be called a "foot-gun" on the Rust message board that I
+        frequent.  Since the trace pointer isn't optional, I think you'd be within your rights to
+        NULL it out as well, to cover the case where the call fails.
+
+Q-02.05: <<<<----CLOSED, Nothing to do---->>>> Not really a question, but there appears to a bug in the
+    implementation of rosie_compile.  *pat is set to 0 (line 590) before pat is checked against NULL (line 598),
+    meaning that if the arg were null then the code already would have crashed before the check.  So the check
+    appears to be pointless unless I've misread something.
+
+    Jamie said:
+        Good catch, thanks!  Fix staged for next patch release.  I see that I could
+        be more defensive here about the engine parameter as well, which if null
+        will cause a crash.
+
+Q-02.06: <<<<----CLOSED, Fixed---->>>> How does the life-cycle of the `rosie_match` argument's `match.data`
+    member work?  I see that the engine owns the memory so the client shouldn't free it.  But how long can the
+    client depend on the pointer being valid?  Does anything inside the engine cause these pointers to be freed
+    or re-used?  Or does the engine just keep accreting match result buffers until the engine itself is freed with
+    `rosie_finalize`?
+
+    Luke said: (paraphrasing Jamie)
+        Answer: The buffer is reused with each call to rosie_match.  This design choice was made to reduce malloc / free
+        overhead in situations where rosie_match is called repeatedly in a loop.
+
+        In the future, an API that allows the buffer to be retained by the client may be advantageous for performance
+        in situations where the client wants to keep multiple match result buffers around without copying them.  This
+        is not the common use case however.
+
+    Luke said:
+        For the Rust interface, this means the RawMatchResult structure will take a mutable borrow of the engine,
+        preventing any engine access while the RawMatchResult is alive.
+
+        Updated RosieEngine::match_pattern_raw() so it takes a mutable borrow of the engine, and then creates the
+        RawMatchResult with the lifetime of that borrow.
+
+Q-02.07: <<<<----CLOSED, Nothing to do---->>>> the code for `rosie_load` says "N.B. Client must free 'messages' ",
+    but I spotted a few places where messages was set using `rosie_new_string_from_const`, which means the pointer
+    points to a static, and shouldn't be freed. However, in the common case, the ptr gets its value from
+    `rosie_new_string`, which does perform a malloc(). This issue exists in several places outside of `rosie_load`
+    as well.
+
+    Jamie said:
+        This is a situation that either needs clarification in the Rosie API doc
+        (which barely exists:
+        https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/doc/librosie.md)
+        or I need to change the "protocol".
+
+        Currently, the functions that accept *messages will stomp over whatever
+        value this pointer had on entry.  A new allocation will be made if the
+        function generates any messages.  The protocol is (should be) that the API
+        ignores the value of *messages on entry, and will either set *messages to
+        NULL on exit or set *messages to a new allocation containing messages.  If
+        the caller sees non-null *messages returned, they now own that memory.
+
+        This is a common convention in some C code, but may not mesh well with
+        Rust.  Of particular concern, I think, is that code calling rosie_load and
+        other APIs may expect rosie_load and others to reuse *messages.  As you
+        note, it will not.  The value for *messages supplied by the caller on entry
+        to load/loadfile will be ignored.  A new value for *messages is (should be)
+        always set by load/loadfile before returning.  That new value may be NULL
+        (no messages).
+
+        I'm interested to know what would work better wrt Rust?
+
+    Luke said:
+        Ha!  I didn't even notice the librosie docs file!
+        https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/doc/librosie.md
+
+        I would have asked fewer dumb questions if I had read that.  :-/
+
+        Your explanation of messages makes perfect sense, and that's essentially what I understood
+        already from the docs and code that I did read.  I must have been really tired when I wrote the
+        question because I now see that `rosie_new_string_from_const()` calls into `rosie_new_string()`,
+        so the original issue is moot.
+        
+        For some reason, I thought it called into `rosie_string_from()`, perhaps because
+        `rosie_string_from` is implemented right below.
+
+        Generally, WRT Rust, Rust is capable of being a low-level language so it's possible to get it to do
+        whatever C / C++ can do with very few (if any) exceptions.  But, philosophically, I think of Rust as
+        a way to validate the "shape" of an api.  I find that the things that are friendy in Rust generally
+        map to any language, while the things that Rust fights you about might be a bad idea in general.  
+        The one exception is that rust lets the compiler decide whether some objects are heap-allocated or
+        stack-allocated, while C & C++ force that decision into the code. 
+
+Q-02.08: <<<<----CLOSED, Nothing to do---->>>> the comments above `rosie_load` & `rosie_loadfile` makes no
+    mention of the client needing to free pkgname. However, looking inside the function implementations, it
+    appears that pkgname is allocated with rosie_new_string, and not retained inside the engine, therefore,
+    it appears that the caller should also be responsible for deallocating 'pkgname'.  Did I miss something?
+
+    Jamie said:
+        This is bug in the documentation.  The caller must free `pkgname` if it
+        comes back non-null but ONLY if the call to load/loadfile succeeded.  By
+        contrast, the `messages` pointer is always set by load/loadfile and if it's
+        non-null on return to the caller, the caller must free it.  This is an
+        inconsistency in the way the two args are handled.
+
+    Luke said:
+        That's already what the Rust code does. :-)
 
 Section 3, Behavior Clarifications
 
