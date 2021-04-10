@@ -563,24 +563,118 @@ Q-03.06: <<<<----CLOSED, Fixed---->>>> Along the same lines, why does `rosie_imp
         from your response.  If you incorporate the above into a Rosie document, I'll link to it from the
         Rust crate docs.
 
-Q-03.07: How should I think about the `start` index for `rosie_match` & `rosie_trace`?  It seems to be 1-based.  But what
-    does passing 0 signify conceptually?  Empirically, passing 0 just seems to mess everything up.
-    For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
-    character more than the pattern really matched.  If 0 has a conceptual meaning, I'd like to make sure it's documented
-    and tested.  And if 0 is never valid, I will check for it as an invalid argument. 
+Q-03.07: <<<<----CLOSED, Fixed---->>>> How should I think about the `start` index for `rosie_match` & `rosie_trace`?
+    It seems to be 1-based.  But what does passing 0 signify conceptually?  Empirically, passing 0 just seems to mess
+    everything up. For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to
+    match one character more than the pattern really matched.  If 0 has a conceptual meaning, I'd like to make sure
+    it's documented and tested.  And if 0 is never valid, I will check for it as an invalid argument.
 
-Q-03.08: How should the `abend` field of the match result data be exposed to the client?  If its meaning is
-    encoder-specific, is there any documentation I can reference?
+    Jamie said:
+        Indeed, the influence of data science (and Lua) is apparent with the 1-based
+        indexing in Rosie.  Rosie should check for 0 being passed in, and return an
+        error.  Until we get that patched, I would follow your suggestion of
+        catching this in the Rust interface.
 
-Q-03.09: What kind of things are rc files used for?  Is there an example or documentation?
-    I'm working on the assumption that I can skip this functionality for the Rust crate because we probably don't want
-    user-specified configuration overriding the behavior the app developer intended when they incorporated Rosie as a
-    component inside their program.
+        It's not clear that the choice of 1-based indexing and inclusive ranges
+        (where 1..3 includes characters 1, 2, and 3) is the best choice.  Data
+        scientists seem fine with it, unless they program a lot.  :-/
+
+        Dijkstra seems to have won this war, in the sense that almost every
+        programming language uses 0-based indexing and inclusive/exclusive ranges
+        (where 1..3 includes only the second and third characters, because char 1 is
+        the second char, and char 3 is the fourth char and not included in the
+        range).  Rosie v2 (some day) may revisit this.
+
+    Luke said:
+        Ok.  Passing 0 for start now returns RosieError::ArgError in Rust.  For good measure, I also check the
+        upper-bound as well (start <= input.len), because string length is always stored for Rust strings (unlike C
+        strings that require expensive scanning for the NULL terminator)
+
+Q-03.08: <<<<----CLOSED, Nothing to do---->>>> How should the `abend` field of the match result data be exposed to
+    the client?  If its meaning is encoder-specific, is there any documentation I can reference?
+
+    Jamie said:
+        It's not encoder-specific, but it is a conundrum.  There's a Halt
+        instruction in the Rosie bytecode, and it is used by the RPL `error`
+        function to halt the matching while preserving everything that has been
+        matched thus far.  I have found uses for this when writing parsers in RPL,
+        because sometimes I want to signal a "syntax error" in the input and stop
+        the matching.  If matching stops via Halt (`error`), the abend flag is set,
+        but the match data looks completely normal.
+
+        We could argue that the abend return value is not needed, because using
+        `error` in an RPL pattern causes a node to be added to the parse tree, and
+        it has the type `error`.  So the program that consumes the Rosie output will
+        know that the match was abnormally ended.  The abend return value is, then,
+        just a convenience.
+
+        FYI: The RPL `message` function also inserts a node into the parse tree, but
+        unlike `error` it does not halt the matching.  And, I just wrote some
+        examples using Rosie 1.2.2 that show some brokenness with both `message` and
+        `error`.  They take a string argument which should appear in the data field
+        of the output, and that string is not appearing.  I'll patch and add tests
+        for this.
+
+    Luke said:
+        Ok.  For now, the field will remain inaccessible to the API users.
+
+Q-03.09: <<<<----OPEN, follow-up questions---->>>> What kind of things are rc files used for?  Is there an example or
+    documentation? I'm working on the assumption that I can skip this functionality for the Rust crate because we
+    probably don't want user-specified configuration overriding the behavior the app developer intended when they
+    incorporated Rosie as a component inside their program.
+
+    Jamie said:
+        Agree that you can skip this.  The arcanely named "run control" file
+        predates Unix, I think.  The Rosie CLI (by default) reads ~/.rosierc if it
+        exists, and will configure some settings based on what it finds.  The file
+        format is defined in rpl/rosie/rcfile.rpl, and it's a subset of the RPL
+        syntax.  My usual .rosierc file looks like this:
+
+        libpath = "/usr/local/lib/rosie/rpl"
+        libpath = "/Users/jennings/Projects/community/lang"
+        libpath = "/Users/jennings/Projects/community/rawdata"
+
+        -- Changed net.path to green for demos:
+        colors = "*=default;bold:net.*=red:net.ipv6=red;underline:net.url_common=red;bold:net.path=green:net.MAC=underline;green:num.*=underline:word.*=yellow:all.identifier=cyan:id.*=bold;cyan:os.path=green:date.*=blue:time.*=1;34:ts.*=underline;blue:num.*=red;underline"
+
+        colors="destructure.find.<search>=red:destructure.alpha=blue:destructure.num=cyan"
+
+        There are two uncommon design decisions in evidence here, and even now after
+        5 years I wonder what is the best approach.
+
+        (1) You can add more components to a list-based configuration item like
+        libpath or colors by adding another "assignment" statement.  Probably the
+        syntax should have used "+=" and not "=" because that's what they do.  The
+        benefit is that it's easy to add something new and then take it out --
+        because it's on a line by itself, you don't have to edit a long list.
+
+        (2) If you configure a setting in the rcfile (or on the command line, or
+        through the API), we throw away any default value for that setting.  The
+        rationale can be seen using libpath:  If you set libpath, it is your choice
+        as to whether or not to include the path to the standard library, and if you
+        include it, where in the libpath it should go.  The downside to this is that
+        you have to list the standard library as soon as you customize libpath --
+        which means you have to know where it is.  (The `rosie config` command and
+        API can tell you this information and more, which helps in this regard.)
+
+    Luke said:
+        Your answers piqued a few more questions:
+
+        A: Does the `rosie_libpath` function append additional paths, in a similar way to rcfile assignment statements?
+            If so, how can I clear out old paths?  If not, I assume I can set multiple paths using one call to
+            rosie_libpath, so what delimiter / escape sequence should I use between filesystem paths?
+        B: Later on, (Q-04.02), I ask about how to configure colors.  So now my question is: can this be done
+            through the api without an rc file?  Unlike rosie_libpath which is two-way, it looked to me like
+            rosie_config was only able to get config values but not set them.  Did I miss something?
 
 Section 4, Rust-level API Aesthetics & Documentation Questions
 
-Q-04.01: How should I describe the match_result.ttotal and match_result.tmatch in the documentation?  I see that they are
+Q-04.01: <<<<----CLOSED, Fixed---->>>> How should I describe the match_result.ttotal and match_result.tmatch in the documentation?  I see that they are
     timing counters, but what operations, precisely, do they measure?
+
+    Luke said:
+        Docs Jamie referenced had the answer to this question.
+        Added accessors: RawMatchResult::time_elapsed_matching() and RawMatchResult::time_elapsed_total(). 
 
 Q-04.02: Where is the documentation for the `color` encoder, and specifically how to customize the colors associated with
     each sub-expression?  I'd like to link to it from the Rust documentation.

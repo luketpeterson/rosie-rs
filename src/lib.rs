@@ -195,6 +195,8 @@ pub enum RosieError {
     /// An error related to a package input has occurred, for example a missing package or `.rpl` file,
     /// a missing package declaration in the file, or another syntax error in the package.rpl file.
     PackageError = -1002,
+    /// An invalid argument was passed to a rosie function.
+    ArgError = -1003,
 }
 
 impl RosieError {
@@ -339,6 +341,8 @@ impl RosieEngine<'_> {
 
         let mut path_rosie_string = RosieString::from_str(new_path);
 
+        //Q-03.09 QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
+        
         let result_code = unsafe { rosie_libpath(self.copy_self(), &mut path_rosie_string) };
 
         if result_code == 0 {
@@ -478,7 +482,8 @@ impl RosieEngine<'_> {
     /// **NOTE**: The returned [RawMatchResult] takes a mutable borrow of the `engine`, and thus the engine cannot be accessed
     /// while the RawMatchResult is in use.  Copying the data from the RawMatchResult will allow the `engine` to be released.
     /// 
-    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
+    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input, and
+    /// passing 0 (zero) is an error.
     /// 
     /// # Example using the JSON encoder with serde_json
     /// ```
@@ -507,8 +512,11 @@ impl RosieEngine<'_> {
     /// ```
     pub fn match_pattern_raw<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
 
+        if start < 1 || start > input.len() {
+            return Err(RosieError::ArgError);
+        }
+
         let input_rosie_string = RosieString::from_str(input);
-        
         let mut match_result = RawMatchResult::empty();
 
         let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
@@ -524,7 +532,8 @@ impl RosieEngine<'_> {
     /// 
     /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
     /// 
-    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input (Q-03.07 Question)
+    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input, and
+    /// passing 0 (zero) is an error.
     pub fn match_pattern<'input>(&mut self, pattern_id : PatternID, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
         
         let raw_match_result = self.match_pattern_raw(pattern_id, start, input, &MatchEncoder::Byte)?;
@@ -559,8 +568,11 @@ impl RosieEngine<'_> {
     /// 
     pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
 
+        if start < 1 || start > input.len() {
+            return Err(RosieError::ArgError);
+        }
+        
         let input_rosie_string = RosieString::from_str(input);
-
         let mut matched : i32 = -1;
 
         trace.0.manual_drop(); //We'll be overwriting whatever string was already there
@@ -741,7 +753,7 @@ impl RawMatchResult<'_> {
             tmatch: 0
         }
     }
-    //Returns `true` if the pattern was matched in the input, otherwise returns `false`.
+    /// Returns `true` if the pattern was matched in the input, otherwise returns `false`.
     pub fn did_match(&self) -> bool {
         if self.data.is_valid() {
             return true;
@@ -752,20 +764,24 @@ impl RawMatchResult<'_> {
         }
         false
     }
-    //Returns the raw buffer, outputted by the encoder during the match operation
+    /// Returns the raw buffer, outputted by the encoder during the match operation
     pub fn as_bytes(&self) -> &[u8] {
         self.data.as_bytes()
     }
-    //Returns the match buffer, interpreted as a UTF-8 string
+    /// Returns the match buffer, interpreted as a UTF-8 string
     pub fn as_str(&self) -> &str {
         self.data.as_str()
     }
-    //TODO: Add getters for timing values in the structure
-    //Q-04.01: QUESTION FOR A ROSIE EXPERT.  the match_result.ttotal and match_result.tmatch fields seem to often get non-deterministic values
-    //that vary from one run to the next.  Although the numbers are always within reasonable ranges.  Nonetheless, This scares me.
-    //It feels like uninitialized memory or something might be influencing the run.
-
-    //Q-03.08: QUESTION FOR A ROSIE EXPERT about the abend field.  How to expose that to the user??
+    /// Returns the time, in microseconds, elapsed during the call to [match_pattern_raw](RosieEngine::match_pattern_raw)
+    pub fn time_elapsed_total(&self) -> usize {
+        usize::try_from(self.ttotal).unwrap()
+    }
+    /// Returns the time, in microseconds, elapsed matching the pattern against the input.
+    /// 
+    /// This value excludes time spend encoding the results
+    pub fn time_elapsed_matching(&self) -> usize {
+        usize::try_from(self.tmatch).unwrap()
+    }
 }
 
 //A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
@@ -1032,15 +1048,13 @@ fn rosie_engine() {
     //println!("{}", message.as_str());
 
     //Recompile a pattern expression and match it against a matching input using match_pattern_raw
-    //Q-03.07 QUESTION FOR A ROSIE EXPERT: The start index seems to be 1-based.  why?  Passing 0 just seems to mess everything up.
-    //  For example, it causes "rosie_match" not to match, while "rosie_trace" does match, but claims to match one
-    //  character more than the pattern really matched
     let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
     let raw_match_result = engine.match_pattern_raw(pat_idx, 1, "21", &MatchEncoder::Bool).unwrap();
     //Validate that we can't access the engine while our raw_match_result is in use.
     //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
     // assert!(engine.config_as_json().is_ok());
     assert_eq!(raw_match_result.did_match(), true);
+    assert!(raw_match_result.time_elapsed_matching() <= raw_match_result.time_elapsed_total()); //A little lame as tests go, but validates they are called at least.
 
     //Now try the match with the high-level match_pattern call
     let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
