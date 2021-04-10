@@ -3,13 +3,49 @@ Rosie Rust Crate Questions:
 
 Section 1, Build & Linking
 
-Q-01.01: Does static-linking librosie into a compiled executable make any sense?  The intention here is to reduce deployment
-    complexity for client apps, since most systems are unlikely to have librosie already installed.  However, if Rosie itself
-    has many other dependencies or if there is no easy way to bundle the standard pattern library then static linking may
-    not accomplish anything.
+Q-01.01: <<<<----PUNTED to future---->>>> Does static-linking librosie into a compiled executable make any sense?
+    The intention here is to reduce deployment complexity for client apps, since most systems are unlikely to have librosie
+    already installed.  However, if Rosie itself has many other dependencies or if there is no easy way to bundle the
+    standard pattern library then static linking may not accomplish anything.
 
-Q-01.02: What is the best way to build librosie from within Cargo (the rust code package manager)?  My intention here is to
-    provide a more streamlined experience for Rust developers using the Rosie crate.  It appears there are several options:
+    Jamie said:
+        We used to build librosie.a and it needs only libc.  No one was using it, so
+        it dropped out of the Makefile the last time we reworked the build process.
+        As you point out, installing a static lib is not sufficient because you also
+        need the compiled lua files and the standard pattern library, too.
+
+        Btw, there is a subtlety wrt the standard pattern library.  In theory you
+        don't need it.  It's convenient, sure.  And it's architecture and OS
+        independent, and the RPL files do not undergo any "build" step -- they are
+        just "pattern source".  In reality, Rosie is self-hosting in the sense that
+        the syntax for RPL is defined in rpl/rosie/rpl_1_3.rpl, and this file is
+        read when rosie (librosie) starts up.
+
+        The (lua) code src/lua/parse_core.lua can parse a restricted subset of RPL,
+        and rpl/rosie/rpl_1_3.rpl is written in that.
+
+        We could easily eliminate the run-time dependency on rpl/rosie/rpl_1_3.rpl.
+        We should build the RPL parser once, at build time, and bake it into
+        librosie as the default RPL parser.  This should improve startup time, too,
+        although no one has complained about that yet.  Probably because it's truly
+        a start-up cost in that it happens once, not once per engine.  Engine
+        creation is really cheap.
+
+        To get the most benefit from a static library, I'd probably pursue:
+        - Link a librosie.a
+        - Use an existing tool to package all the compiled lua files into a system
+        binary, and link that into librosie.a
+        - Generate the (Rosie vm) bytecode for rpl/rosie/rpl_1_3.rpl at build time
+        - Incorporate that bytecode into librosie.a also, so it's not a separate file  
+        - The result should be a single librosie.a that can be used by itself, or
+        optionally with any library of useful patterns
+
+    Luke said:
+        We'll revisit this when the rosie build produces a self-contained librosie.a that is appropriate for static linking.
+
+Q-01.02: <<<<----PUNTED to future---->>>> What is the best way to build librosie from within Cargo (the rust code
+    package manager)?  My intention here is to provide a more streamlined experience for Rust developers using the Rosie
+    crate.  It appears there are several options:
     Option 1: Include the rosie source inside the cargo crate.  Zipped up, rosie-v1.2.2 source is ~8MB, which isn't too bad.
         but then the build process would need to unpack it, run `make fetch` to pull in the additional dependencies, and
         finally build it.  This means the build process relies on the (gitlab?) server being up, as well as bloating the
@@ -19,30 +55,122 @@ Q-01.02: What is the best way to build librosie from within Cargo (the rust code
         source?  `git clone` ends up downloading a bunch of junk that's not needed for a minimal build-from-source.
     Option 3: Is there an option 3?
 
-    UPDATE: Kornel believes that a Rust Crate should contain its own source, and that means a sys crate should contain the
-    source for the library it links.  The cargo crate should not install in a shared location, and keep all of its build
-    products in the temporary cargo directory.  In addition, the cargo build process should not require a network
-    connection.
+    Luke said: (paraphrasing Kornel)
+        Kornel believes that a Rust Crate should contain its own source, and that means a sys crate should contain the
+        source for the library it links.  The cargo crate should not install in a shared location, and keep all of its
+        build products in the temporary cargo directory.  In addition, the cargo build process should not require a
+        network connection.
 
-    Kornel's reference guide to creating sys crates: https://kornel.ski/rust-sys-crate
+        Kornel's reference guide to creating sys crates: https://kornel.ski/rust-sys-crate
 
-    Unfortunately, rosie's Makefile requires the following packages on top of vanilla ubuntu: libreadline-dev, libbsd-dev,
+    Luke said:
+        Unfortunately, rosie's Makefile requires the following packages on top of vanilla ubuntu: libreadline-dev,
+        libbsd-dev, meaning it's not straightforward to build from source in cargo.
 
-    I haven't investigated what these libraries do inside of librosie, but I have a suspicion libreadline is for the repl
-    shell, so perhaps the best course of action is to refactor the rosie build itself to remove that dependency from a
-    "library-only" build.  Perhaps the stdio functionality from libbsd could be wrapped at compile-time with a shim
-    to make it use the platform-native io functions, rather than requiring the libbsd library to be installed.
+        I haven't investigated what these libraries do inside of librosie, but I have a suspicion libreadline is for the
+        repl shell, so perhaps the best course of action is to refactor the rosie build itself to remove that dependency
+        from a "library-only" build.  Perhaps the stdio functionality from libbsd could be wrapped at compile-time with
+        a shim to make it use the platform-native io functions, rather than requiring the libbsd library to be installed.
 
-Q-01.03: How does the pip installer handle the above situation?  I noticed `pip install rosie` doesn't result in a shared
-    library ending up anywhere in the link path.  Perhaps I should copy the pip approach, although Python is less suited
-    to building executables designed to be deployed in binary form (vs. Rust), so perhaps the Python approach won't suit
-    us here.
+        Kornel's advice in such a situation is to package each C library dependency in its own -sys crate so Cargo
+        can build the whole thing.  That sounds like more side-work than I want to take on right now.  Especially if the
+        librosie build might change to eliminate those dependencies.
 
-Q-01.04:  I would like to have a crate version that references the librosie version, but I want a minor-digit to allow
-    for a revision to the rust crate without a revision to librosie, and unfortunately Cargo only supports 3-tupple
-    versions.  What would be the least-bad option for versioning the rust crates?
+        Punting the build-librosie-from-source-within-cargo feature to the future.
 
-Q-01.05: What is the name / server for the rosie ubuntu package?
+    Jamie said:
+        If the requirement is to build from source, then include a full zip of the
+        Rosie source along with its submodules (lua, cjson, ...) is probably the
+        simplest approach.
+
+        An odd idea, perhaps worth considering, is to package Rosie in a crate
+        WITHOUT the Rust interface -- which I know sounds bizarre.  But if there
+        were two crates, then you could express version dependencies between them,
+        right?  So a person could use one crate merely as a convenient way to
+        install Rosie, and to upgrade it independently of the Rust interface which
+        can then evolve at its own pace.
+
+    Luke said:
+        Jamie & Kornel appear to agree on most points.  Jamie independently has intuited the
+        correct function of -sys crates, unlike Luke's abominable usage of the term.
+
+        The plan of action will be:
+        -rename the current crate from "rosie-sys" to "rosie-rs".
+        -create a *REAL* -sys crate to build librosie from source, at a future time, perhaps
+            when librosie can eliminate the dependencies on libreadline and libbsd.
+
+Q-01.03: <<<<----CLOSED, Nothing to do---->>>> How does the pip installer handle the above situation?  I noticed
+    `pip install rosie` doesn't result in a shared library ending up anywhere in the link path.  Perhaps I should copy
+    the pip approach, although Python is less suited to building executables designed to be deployed in binary form
+    (vs. Rust), so perhaps the Python approach won't suit us here.
+
+    Jamie said:
+        The Python module for using Rosie simply requires the user to first install
+        Rosie.  I think this is probably the right way for all the language modules
+        to work, but it does mean that we have to do better at packaging.
+
+        ... Pip only installs the Python part; the user must first install
+        Rosie, which provides librosie as well as the rosie (CLI) binary.
+
+        Rust devs may have different requirements from what is provided by the
+        "usual" download and install process.  Perhaps some of those can be
+        satisfied by the Rosie project itself?  E.g. we could build a static
+        librosie.a; we could make it possible to `apt install rosie` or `yum install
+        rosie`.
+
+    Luke said:
+        I missed that pip wasn't installing librosie.  I just assumed it was installing it somewhere hidden.  I
+        tested `pip install rosie` on a system with no librosie present and the install suceeded.  I didn't attemp
+        to use rosie within python. <--Forehead is sore now-->
+
+Q-01.04: <<<<----CLOSED, Nothing to do---->>>> I would like to have a crate version that references the
+    librosie version, but I want a minor-digit to allow for a revision to the rust crate without a revision
+    to librosie, and unfortunately Cargo only supports 3-tupple versions.  What would be the least-bad option
+    for versioning the rust crates?
+
+    Jamie said: 
+        This is a tough one.  While we've been trying to maintain a "Rosie version"
+        as a major/minor/patch tuple, it's been challenging because sometimes a
+        change is only to the CLI.  Users of librosie may see literally no change at
+        all in some cases.  (And internally we maintain an "RPL version", currently
+        at 1.3, which tracks language changes.  There have been only additions, no
+        feature changes/removal, so the major is still at 1 and should stay there
+        for a long time.)
+
+        Suppose Rosie were packaged separately from the Rust interface.  What would
+        you need then regarding versioning?  When loading librosie.so, you'd need to
+        check to make sure it was within some acceptable version range.  So we need
+        a version API.  When statically linking with librosie.a, you'd want a
+        compile-time check for the same, right?  In C, you'd include librosie.h,
+        which should provide a version number (but probably does not, currently).
+
+        I'd like to explore this further.
+
+    Luke said:
+        A real -sys crate could track the librosie version in lockstep.  Then the -rs "rust interface" crate
+        would get its own independent version and could use the cargo dependency mechanism appropriately.
+
+Q-01.05: <<<<----PUNTED to future---->>>> What is the name / server for the rosie ubuntu package?
+
+    Jamie said:
+        If it's acceptable to impose "first install Rosie" on the Rust programmer,
+        then we could look at platform-based package managers (as opposed to
+        language-based).  `brew install rosie` works if (1) you use brew, and (2)
+        you add an additional "tap"
+        (https://gitlab.com/rosie-community/packages/homebrew-rosie).
+
+        Today, brew builds from source, but I've experimented with their "bottle"
+        feature which installs pre-built binaries, and it looks straightforward.
+
+        A volunteer who could construct a package for apt and for the thing that
+        replaced yum would be very much appreciated in this regard.  I would buy
+        them a beer or other sustenance.
+
+    Luke said:
+        Facepalm.  I guess in all the installing and uninstalling of rosie I was doing, I forgot I never
+        did use `apt-get install` to install rosie.
+
+        Unfortunately I don't think I'm the right person to create the apt package.  At least not right now.
 
 Section 2, Pedantic Memory Safety Concerns
 
@@ -71,7 +199,7 @@ Q-02.05: Not really a question, but there appears to a bug in the implementation
     (line 590) before pat is checked against NULL (line 598), meaning that if the arg were null then the code already 
     would have crashed before the check.  So the check appears to be pointless unless I've misread something.
 
-Q-02.06: <<<<----ANSWERED---->>>>  How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
+Q-02.06: <<<<----CLOSED, ANSWERED---->>>>  How does the life-cycle of the `rosie_match` argument's `match.data` member work?  I see that the engine owns
     the memory so the client shouldn't free it.  But how long can the client depend on the pointer being valid?  Does
     anything inside the engine cause these pointers to be freed or re-used?  Or does the engine just keep accreting
     match result buffers until the engine itself is freed with `rosie_finalize`?
