@@ -984,10 +984,6 @@ fn rosie_string() {
     //Now test that we can safely deallocate the heap-allocated String that we used to create a RosieMessage
     drop(hello_string);
     assert!(rosie_message.is_valid());
-
-    let mut rosie_string = RosieString::from_str("I'm static");
-    rosie_string.manual_drop();
-
 }
 
 #[test]
