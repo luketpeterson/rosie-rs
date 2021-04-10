@@ -345,8 +345,8 @@ Q-02.08: <<<<----CLOSED, Nothing to do---->>>> the comments above `rosie_load` &
 
 Section 3, Behavior Clarifications
 
-Q-03.01: Why does librosie return 0 (SUCCESS) in certain failure situations?  Am I misunderstanding the purpose of the
-    error result code?  For example, I get success for:
+Q-03.01: <<<<----CLOSED, Fixed---->>>> Why does librosie return 0 (SUCCESS) in certain failure situations?
+    Am I misunderstanding the purpose of the error result code?  For example, I get success for:
     * An invalid pattern syntax sent to `rosie_compile`
     * text that fails to parse, sent to `rosie_load`
     * The package specified to `rosie_import` doesn't exist
@@ -354,11 +354,53 @@ Q-03.01: Why does librosie return 0 (SUCCESS) in certain failure situations?  Am
     * An invalid file path or other file system err (e.g. no access), in `rosie_loadfile`
     * Syntax errors in the rpl file, opened with `rosie_loadfile`
 
-Q-03.02: What is the nicest way, in your opinion, to communicate a "no match" from the Rust equivalent of `rosie_match`?
-    As you know, `rosie_match` returns SUCCESS, but a NULL pointer in the match result data.  In Rust, NULL pointers
-    are not a thing, so I thought I'd create a "NoMatch" error code.  But "NoMatch" isn't really an error in the same
-    way that other errors are errors.  On the other hand, I don't want to bloat the function with another argument.
-    So, a "NoMatch" error is the cleanest interface, as long as it's conceptually ok.
+    Jamie said:
+        The "first level" of return value indicates whether the API call succeeded
+        at a very basic level, which should correspond to "no internal errors were
+        encountered".
+
+        Our goal is: If you get the API to return a failure code, then either you
+        violated the protocol for using that function (e.g. by supplying NULL where
+        it's not allowed) or there's a bug in Rosie.  The first should be easy to
+        rule out, though it may require logging to be enabled (which is currently a
+        compile time flag, alas).  Once any usage issues are ruled out, the bug is
+        ours and should be reported.
+
+    Luke said:
+        Ok.  I've taken the liberty of adding a few additional errors to the Rust `RosieError` enum:
+        RosieError::PatternError is any success code from rosie_compile, that still results in an
+            invalid pattern.
+        RosieError::PackageError is any success code from rosie_load, rosie_loadfile or rosie_import
+            that results in a NULL package name or an error status in the "ok" parameter.
+
+        In a perfect world there would be a way to differentiate an rpl syntax error some some of the
+        other error conditions (such as missing file) without parsing the JSON messages (I'm trying to
+        keep the JSON parser dependency out of the rust crate) but that's a minor knit.
+
+        Regarding the "ok" parameter, I think there is a documentation bug.  The librosie docs say:
+        "If ok is non-zero, an error occurred, and messages will contain a JSON-encoded error structure."
+        Empirically, however, the value appears to be a bool represented as an int, so therefore, non-zero
+        is success.
+
+Q-03.02: <<<<----CLOSED, Fixed---->>>> What is the nicest way, in your opinion, to communicate a "no match" from the
+    Rust equivalent of `rosie_match`? As you know, `rosie_match` returns SUCCESS, but a NULL pointer in the match
+    result data.  In Rust, NULL pointers are not a thing, so I thought I'd create a "NoMatch" error code.  But
+    "NoMatch" isn't really an error in the same way that other errors are errors.  On the other hand, I don't want
+    to bloat the function with another argument. So, a "NoMatch" error is the cleanest interface, as long as it's
+    conceptually ok.
+
+    Jamie said:
+        Ah, this is an interesting design question.  In Python, we throw an
+        exception if the API call fails.  If the API call succeeds, then Python can
+        return NULL (for no match) or a match data structure.  In Go, we return an
+        error status and a value, so the error status takes the place of the
+        exception, and it can indicate "no error" while the value is NULL to mean
+        "no match".  I don't know enough about Rust to make a recommendation here.
+
+    Luke said:
+        I think I've decided that "no match" is actually something the MatchResult object should be able to represent.
+        Since the object is a black box, this doesn't complicate the interface at all.  Now, both MatchResult and
+        RawMatchResult have a "did_match()" method that returns a bool.
 
 Q-03.03: What are the situations where a valid "messages" string is returned along-side a successful result?  I noticed
     a comment saying this could happen, but I have never seen it.  The reason I ask is that I can roll the messages

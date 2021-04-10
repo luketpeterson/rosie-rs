@@ -194,6 +194,11 @@ pub enum RosieError {
     SysCallFailed = -3,
     /// A failure occurred in the `librosie` engine.
     EngineCallFailed = -4,
+    /// An error related to a pattern input has occurred, for example, an `rpl` syntax error.
+    PatternError = -1001,
+    /// An error related to a package input has occurred, for example a missing package or `.rpl` file,
+    /// a missing package declaration in the file, or another syntax error in the package.rpl file.
+    PackageError = -1002,
 }
 
 impl RosieError {
@@ -446,11 +451,12 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
         
-        //Q-03.01 QUESTION FOR A ROSIE EXPERT.  Why is it that an invalid pattern syntax will result in a Success result code, even if
-        //  the returned pattern index is 0?  I don't want invalid PatternIDs to be possible in Rust, therefore, I'm also
-        //  checking the pattern index against 0.  Am I misunderstanding the librosie interface?
-        if result_code == 0 && pat_idx > 0 {
-            Ok(PatternID(pat_idx))
+        if result_code == 0 {
+            if pat_idx > 0 {
+                Ok(PatternID(pat_idx))
+            } else {
+                Err(RosieError::PatternError)
+            }
         } else {
             Err(RosieError::from(result_code))
         }
@@ -530,11 +536,7 @@ impl RosieEngine<'_> {
         if raw_match_result.did_match() {
             Ok(MatchResult::from_byte_match_result(input, raw_match_result))
         } else {
-            //Q-03.02 QUESTION FOR A ROSIE EXPERT.  Why do I get a success return code when it didn't match?
-            //What is an appropriate return code in this situation?  I was considering creating a "NoMatch" return code, but I thought
-            //that might be against some subtler aspects of the rosie design.  In any case, I thing returning "Error::Success", as
-            //the current code does, is not a very friendly interface
-            Err(RosieError::MiscErr)
+            Ok(MatchResult::new_no_match())
         }
     }
     //Q-03.04: QUESTION FOR A ROSIE EXPERT
@@ -612,12 +614,13 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        //Q-03.01 QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified rpl text fails
-        //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
-        if result_code == 0 && pkg_name.len() > 0 && ok > 0 {
-            Ok(RosieMessage(pkg_name))
+        if result_code == 0 {
+            if pkg_name.is_valid() && ok > 0 {
+                Ok(RosieMessage(pkg_name))
+            } else {
+                Err(RosieError::PackageError)
+            }
         } else {
-            pkg_name.manual_drop();
             Err(RosieError::from(result_code))
         }
     }
@@ -644,12 +647,13 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        //Q-03.01 QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
-        //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
-        if result_code == 0 && pkg_name.len() > 0 && ok > 0 {
-            Ok(RosieMessage(pkg_name))
+        if result_code == 0 {
+            if pkg_name.is_valid() && ok > 0 {
+                Ok(RosieMessage(pkg_name))
+            } else {
+                Err(RosieError::PackageError)
+            }
         } else {
-            pkg_name.manual_drop();
             Err(RosieError::from(result_code))
         }
     }
@@ -705,10 +709,13 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        //Q-03.01 QUESTION FOR A ROSIE EXPERT: Why do I get a success return code, even when the specified file doesn't exist or it fails
-        //  to parse as valid rpl?  I guess that's what the "ok" parameter is for, but why not use the result code?
-        if result_code == 0 && out_pkg_name.len() > 0 && ok > 0 {
-            Ok(RosieMessage(out_pkg_name))
+        if result_code == 0 {
+            if out_pkg_name.is_valid() && ok > 0 {
+                Ok(RosieMessage(out_pkg_name))
+            } else {
+                out_pkg_name.manual_drop();
+                Err(RosieError::PackageError)
+            }
         } else {
             out_pkg_name.manual_drop();
             Err(RosieError::from(result_code))
@@ -775,7 +782,7 @@ impl RawMatchResult<'_> {
 }
 
 //A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
-//TODO: Roll this out into a stand-along crate
+//TODO: Roll this out into a stand-alone crate
 #[derive(Debug)]
 enum MaybeOwnedString<'a> {
     Owned(String),
@@ -898,6 +905,22 @@ impl MatchResult<'_> {
     fn from_byte_match_result<'input>(input : &'input str, src_result : RawMatchResult) -> MatchResult<'input> {
         let mut data_buf_ref = src_result.data.as_bytes();
         MatchResult::from_bytes_buffer(input, &mut data_buf_ref, None)
+    }
+    fn new_no_match() -> MatchResult<'static> {
+        MatchResult{
+            pat_name : "".to_string(),
+            start : 0,
+            end : 0,
+            data : MaybeOwnedString::Borrowed(""),
+            subs : vec![]
+        }
+    }
+    pub fn did_match(&self) -> bool {
+        if self.start == 0 && self.end == 0 {
+            false
+        } else {
+            true
+        }
     }
     pub fn pat_name_str(&self) -> &str {
         self.pat_name.as_str()
@@ -1038,8 +1061,9 @@ fn rosie_engine() {
     assert_eq!(match_result.end(), 3);
     assert_eq!(match_result.sub_pat_count(), 0);
 
-    //Try it against non-matching input, and make sure we get the appropriate error
-    assert!(engine.match_pattern(pat_idx, 1, "99").is_err());
+    //Try it against non-matching input, and make sure we get no match
+    let match_result = engine.match_pattern(pat_idx, 1, "99").unwrap();
+    assert_eq!(match_result.did_match(), false);
 
     //Test the trace function, and make sure we get a reasonable result
     let mut trace = RosieMessage::empty();
