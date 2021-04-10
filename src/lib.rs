@@ -177,8 +177,6 @@ impl RosieMessage {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum RosieError {
     /// No error occurred.
-    /// 
-    /// **NOTE**: Often failure conditions result in this result.  This is something I need to understand better.
     Success = 0,
     /// An unknown error occurred.
     MiscErr = -1,
@@ -300,8 +298,9 @@ impl RosieEngine<'_> {
     fn copy_self(&self) -> Self {
         RosieEngine{e: self.e, phantom : self.phantom}
     }
-    /// Creates a new RosieEngine.  If this operation fails then an error message can be obtained by passing a mutable reference
-    /// to a [RosieMessage].
+    /// Creates a new RosieEngine.
+    /// 
+    /// If this operation fails then an error message can be obtained by passing a mutable reference to a [RosieMessage].
     pub fn new(messages : Option<&mut RosieMessage>) -> Result<Self, RosieError> {
         
         let mut message_buf = RosieString::empty();
@@ -341,7 +340,7 @@ impl RosieEngine<'_> {
 
         let mut path_rosie_string = RosieString::from_str(new_path);
 
-        //Q-03.09 QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
+        //Q-03.09.A QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
         
         let result_code = unsafe { rosie_libpath(self.copy_self(), &mut path_rosie_string) };
 
