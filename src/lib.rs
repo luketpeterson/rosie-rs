@@ -10,9 +10,9 @@
 //! This crate dynamically links against the `librosie` library already installed on the target system.  Therefore `librosie` must be installed prior to using this crate.
 //! 
 //! Complete installation info is [here](https://gitlab.com/rosie-pattern-language/rosie#local-installation).
-//! However, Rosie is probably available through your package-manager of choice.  For example, you may run any of the following:
+//! However, Rosie may be available through your package-manager of choice.  For example, you may run one of the following:
 //! 
-//! * `apt-get install rosie`  Q-01.05 QUESTION FOR A ROSIE EXPERT: What is the name / server for the rosie ubuntu package?
+// * `apt-get install rosie`  Q-01.05 QUESTION apt packaged needed!!
 //! * `dnf install rosie`
 //! * `brew install rosie`
 //! 
@@ -20,15 +20,13 @@
 //! 
 //! **NOTE**: This crate has been tested aganst `librosie` version **1.2.2**, although it may be compatible with other versions.
 //! 
-//! **NOTE**: In the future, I would like to include an option to statically link `librosie`, as well as an option to automatically build Rosie through `cargo`.  (Q-01.02 & Q-01.01 QUESTION)
+//! **NOTE**: In the future, I would like to create a rosie-sys crate, that could build `librosie` from source, and also provide an option for static linking.
+// (Q-01.02 QUESTION & Q-01.01 QUESTION)
 //! 
 //! ## In Cargo.toml
 //! Add the following line to your Cargo.toml `[dependencies]` section:
 //! 
 //! `rosie_sys = "0.1.0"`
-//! 
-//! **NOTE**: I would like to have a crate version that references the `librosie` version, but I want a minor-digit to allow for a revision to the
-//! rust crate without a revision to `librosie`, and unfortunately `Cargo` only supports 3-tupple versions. (Q-01.04 QUESTION)
 //! 
 //! ## Example Usage
 //! ```
