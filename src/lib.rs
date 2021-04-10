@@ -1,6 +1,6 @@
-#![crate_name = "rosie_sys"]
+#![crate_name = "rosie_rs"]
 
-//! # rosie_sys Overview
+//! # rosie-rs Overview
 //! This crate implements Rust low-level (but still safe) access to the [**Rosie**](https://rosie-lang.org/about/) matching engine for the [**Rosie Pattern Language**](https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/README.md)\(`rpl`\).
 //! 
 //! Complete reference documentation for `rpl` is [here](https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/doc/rpl.md),
@@ -26,11 +26,11 @@
 //! ## In Cargo.toml
 //! Add the following line to your Cargo.toml `[dependencies]` section:
 //! 
-//! `rosie_sys = "0.1.0"`
+//! `rosie-rs = "0.1.0"`
 //! 
 //! ## Example Usage
 //! ```
-//! use rosie_sys::*;
+//! use rosie_rs::*;
 //! let mut engine = RosieEngine::new(None).unwrap();
 //! engine.import_pkg("date", None, None);
 //! 
@@ -128,7 +128,7 @@ impl RosieString<'_> {
 /// 
 /// # Example
 /// ```
-/// # use rosie_sys::*;
+/// # use rosie_rs::*;
 /// # let mut engine = RosieEngine::new(None).unwrap();
 /// let mut message = RosieMessage::empty();
 /// engine.compile_pattern("invalid pattern", Some(&mut message));
@@ -421,14 +421,14 @@ impl RosieEngine<'_> {
     /// 
     /// # Examples
     /// ```
-    /// # use rosie_sys::*;
+    /// # use rosie_rs::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
     /// let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
     /// ```
     /// 
     /// ```
-    /// # use rosie_sys::*;
+    /// # use rosie_rs::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// let two_digit_year_pat = engine.compile_pattern("{[012][0-9]}", None).unwrap();
     /// ```
@@ -491,7 +491,7 @@ impl RosieEngine<'_> {
     /// ```
     /// extern crate serde_json;
     /// use serde::{*};
-    /// use rosie_sys::*;
+    /// use rosie_rs::*;
     /// 
     /// #[derive(Debug, Deserialize)]
     /// struct JSONMatchResult {
@@ -570,7 +570,7 @@ impl RosieEngine<'_> {
     /// 
     /// # Example
     /// ```
-    /// # use rosie_sys::*;
+    /// # use rosie_rs::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
     /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
@@ -690,14 +690,14 @@ impl RosieEngine<'_> {
     /// # Examples
     /// Without an alias:
     /// ```
-    /// # use rosie_sys::*;
+    /// # use rosie_rs::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
     /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
     /// ```
     /// With an alias:
     /// ```
-    /// # use rosie_sys::*;
+    /// # use rosie_rs::*;
     /// # let mut engine = RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", Some("special_date"), None);
     /// let date_pat = engine.compile_pattern("special_date.any", None).unwrap();
@@ -799,11 +799,6 @@ impl RawMatchResult<'_> {
 
     //Q-03.08: QUESTION FOR A ROSIE EXPERT about the abend field.  How to expose that to the user??
 }
-
-//Discussion about MatchResult vs. RawMatchResult.
-//This object Belongs at a higher level, in the "rosie" crate, rather than the "rosie-sys" crate.
-//I don't think rosie-sys should depend on serde, but also, there is a lot more we can do to make the
-//results friendlier to consume for the API client.
 
 //A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
 //TODO: Roll this out into a stand-along crate
