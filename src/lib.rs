@@ -173,10 +173,6 @@ impl RosieMessage {
     }
 }
 
-//Q-03.03: QUESTION FOR A ROSIE EXPERT: How useful are the status messages in the success case?
-//It feels like a cleaner interface if we could get rid of the messages optional parameter, and pass back the messages
-//  with the error code.
-
 /// An error code from a Rosie operation 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum RosieError {
@@ -539,15 +535,6 @@ impl RosieEngine<'_> {
             Ok(MatchResult::new_no_match())
         }
     }
-    //Q-03.04: QUESTION FOR A ROSIE EXPERT
-    //This API looks like it is designed for working with input data that is too big to load into memory all at once, so presumably passing whole_file = true.  Otherwise the loading of input data should be left to the Rust side.
-    //TODO: This API can wait for later, until I understand the interface better.  If someone needs this functionality to work with very large files at once, perhaps the cmd-line tool is a better choice.
-    //pub fn match_pattern_in_file(&self, pattern_id : PatternID, encoder : &MatchEncoder, whole_file : bool, in_file : &str, out_file : &str, err_file : &str, cin : *mut i32, cout : *mut i32, cerr : *mut i32, err : *mut RosieString) {
-    //     //OPEN ISSUE: It's not clear the best way to bridge the abstracted rust std::fs::File objects with posix file descriptor integers in a portable way.
-    //     //Also, rosie appears to pass back rosie-specific error codes in the file descriptor arguments, so I don't want to risk doing it wrong.
-    //
-    //     //fn rosie_matchfile(engine : RosieEngine, pat : i32, encoder : *const u8, wholefileflag : i32, infilename : *const u8, outfilename : *const u8, errfilename : *const u8, cin : *mut i32, cout : *mut i32, cerr : *mut i32, err : *mut RosieString);
-    // }
 
     /// Traces a pattern match, providing information useful for debugging the pattern expression.
     /// 
@@ -658,12 +645,19 @@ impl RosieEngine<'_> {
         }
     }
 
-    /// Imports a package from the standard pattern library, or creates an alias to an existing package
+    /// Imports a package from the pattern library
     /// 
-    /// Returns a [RosieMessage] containing the name of the package that was loaded.
+    /// Returns a [RosieMessage] containing the name of the package that was loaded, according to the package's `package` declaration.
     /// 
-    /// Optionally, an alias may be provided, in order to specify the name uses by other patterns to access the
-    /// patterns from this package.
+    /// Optionally, an `alias` may be provided, in order to specify the name uses by other patterns to access the
+    /// patterns from this package.  An `alias` may be useful for influencing the the `pat_name` that is part of
+    /// the [MatchResult] and [RawMatchResult] structures.
+    /// 
+    /// **NOTE**: Usually, the returned [RosieMessage] will match the `pkg_name` argument, but this will not always be the case.
+    /// This function searches all directories that are part of the engine's `lib_path` (set using [lib_path](RosieEngine::lib_path)),
+    /// searching for files named '`pkg_name.rpl`'.  When it finds the relevant `.rpl` file, the file is loaded and parsed,
+    /// and the package name from the package's `package` declaration is returned.  It is a best practice for the filename to match the
+    /// `package` declaration, but it is not enforced or required.
     /// 
     /// # Examples
     /// Without an alias:
@@ -682,13 +676,6 @@ impl RosieEngine<'_> {
     /// ```
     /// 
     
-    //Q-03.06 QUESTION FOR A ROSIE EXPERT: Why is the returned actual_pkgname equal to supplied "pkg_name", and not "as"?  It's not a big
-    //  deal, but little clues like this often indicate deeper flaws with my understanding.
-
-    //Q-03.05 QUESTION FOR A ROSIE EXPERT: What is the point of the "as" argument full-stop?  Is there a situation where a user may
-    //  want to load a package under multiple names?  That would make sense if it were possible to extend packages and then you 
-    //  might wind up with the original package for compatibility and your extended version that you modified for your purpose.
-    //  But I'm unclear on how the "package extending" functionality would work.
     pub fn import_pkg(&mut self, pkg_name : &str, alias : Option<&str>, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
         let in_pkg_name = RosieString::from_str(pkg_name);
@@ -945,6 +932,8 @@ impl MatchResult<'_> {
 //Interfaces to the raw librosie functions
 //NOTE: Not all interfaces are imported by the Rust driver
 //NOTE: The 'static lifetime in the returned values is a LIE! The calling code needs to assign the lifetimes appropriately
+//NOTE: This should eventually be moved into a separate `rosie-sys` crate, responsible for building librosie from source,
+//  exposing this (unsafe) interface, and nothing more.
 extern "C" {
     fn rosie_new_string(msg : *const u8, len : size_t) -> RosieString<'static>; // str rosie_new_string(byte_ptr msg, size_t len);
     // str *rosie_new_string_ptr(byte_ptr msg, size_t len);
@@ -1083,13 +1072,6 @@ fn rosie_engine() {
     //Test importing a package
     let pkg_name = engine.import_pkg("net", None, None).unwrap();
     assert_eq!(pkg_name.as_str(), "net");
-
-    //Test importing a package with an alias
-    //let mut message = RosieMessage::empty();//TODO, messages are unnecessary in this test.  I'm just confused by the API behavior
-    let _pkg_name = engine.import_pkg("char", Some("characters"), Some(&mut message)).unwrap();
-    //println!("{}", message.as_str());
-    //Q-03.06 QUESTION FOR A ROSIE EXPERT.  What does the "as" argument to rosie_import actually do?
-    //assert_eq!(pkg_name.as_str(), "characters");
 
     //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
 

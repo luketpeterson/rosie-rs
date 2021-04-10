@@ -402,26 +402,166 @@ Q-03.02: <<<<----CLOSED, Fixed---->>>> What is the nicest way, in your opinion, 
         Since the object is a black box, this doesn't complicate the interface at all.  Now, both MatchResult and
         RawMatchResult have a "did_match()" method that returns a bool.
 
-Q-03.03: What are the situations where a valid "messages" string is returned along-side a successful result?  I noticed
-    a comment saying this could happen, but I have never seen it.  The reason I ask is that I can roll the messages
-    argument inside the return error code, and simplify the API.  But it will mean there will be no way for the caller
-    to get the "messages" if the function sucessfully provided what it was invoked to provide.
+Q-03.03: <<<<----CLOSED, Nothing to do---->>>> What are the situations where a valid "messages" string is returned
+    along-side a successful result?  I noticed a comment saying this could happen, but I have never seen it.  The
+    reason I ask is that I can roll the messages argument inside the return error code, and simplify the API.  But
+    it will mean there will be no way for the caller to get the "messages" if the function sucessfully provided what
+    it was invoked to provide.
 
-Q-03.04: How important is the `rosie_matchfile` entry point for a Rust-based API?  On the "pro" side, by handing the file
-    IO operations to librosie, librosie can presumably do a better job streaming the accesses than a naieve
-    implementation that read the whole input file into a buffer and called `rosie_match`.  On the "con" side, it seems
-    that there is little to be gained by calling this directly from Rust through a native interface, versus just
-    invoking the `rosie` cmd-line tool.  Am I misunderstanding the purpose of this entry point?
+    Jamie said:
+        I don't think this can happen with the current code, because we don't issue
+        any compiler warnings today, only errors.  But we'd like to add warnings and
+        also the occasional informational message, so we planned for this (perhaps
+        prematurely). 
 
-Q-03.05: What is the intended use-case for the "as" argument to `rosie_import`?  Is there a situation where a user may
-    want to load a package under multiple names?  That would make sense if it were possible to extend packages and then you 
-    might wind up with the original package for compatibility and an extended version that is modified for a specific
-    purpose.  But I'm unclear on how the "package extending" functionality would work.  Bascially, I'm asking why the
-    `pkgname` argument isn't always enough.
+        You have a choice as an interface designer to make this simplification
+        (combining the messages and error code).  It will not break anything.  A
+        future version of librosie may cause you to rework your interface so that
+        the Rosie user can get compilation warnings or info, but that's not an issue
+        today.
 
-Q-03.06: Along the same lines, why does `rosie_import` set `actual_pkgname` to `pkg_name` in the success case, instead of
-    to `as`?  Or why is this arg is even needed?  I.e. is there a case where librosie might create a brand new name, or
-    might sometimes return the `pkgname` and other times return `as` depending on some internal logic?
+    Luke said:
+        I see that warnings are a worthwhile reason to keep this messages channel around in a success case.
+        I think the solution for simplifying the interface is to provide higher-level calls, not to remove
+        functionality (even theoretical future functionality) from the low-level calls.  So I'll leave the
+        interface as it is.
+
+Q-03.04: <<<<----CLOSED, Nothing to do---->>>> How important is the `rosie_matchfile` entry point for a Rust-based API?
+    On the "pro" side, by handing the file IO operations to librosie, librosie can presumably do a better job streaming
+    the accesses than a naieve implementation that read the whole input file into a buffer and called `rosie_match`.
+    On the "con" side, it seems that there is little to be gained by calling this directly from Rust through a native
+    interface, versus just invoking the `rosie` cmd-line tool.  Am I misunderstanding the purpose of this entry point?
+
+    Jamie said:
+        This entry point is purely for programmer convenience, and it does seem
+        reasonable to not support it in some language interfaces to librosie.  The
+        `matchfile` API makes it easy to write a new CLI, which is a special use
+        case.  And it can also speed things up for some languages when a programmer
+        happens to want exactly the functionality it provides and no more -- with
+        the speed up coming from not having to marshal strings over to C and back
+        for every line of a file.  If Rust is able to pass librosie a
+        pointer+length, i.e. without having to copy the Rust string just for
+        librosie, then the Rust developer has no need for `matchfile`.
+
+    Luke said:
+        All Rosie Rust interfaces use zero-copy when possible (I know that's a tautology).  But it's not
+        a tautology to say All the Rosie Rust interfaces use zero-copy everywhere Rosie permits it.
+
+        It's decided then.  The Rust interface will not call `rosie_matchfile`.
+
+Q-03.05: <<<<----CLOSED, Fixed---->>>> What is the intended use-case for the "as" argument to `rosie_import`?
+    Is there a situation where a user may want to load a package under multiple names?  That would make sense if it
+    were possible to extend packages and then you might wind up with the original package for compatibility and an
+    extended version that is modified for a specific purpose.  But I'm unclear on how the "package extending"
+    functionality would work.  Bascially, I'm asking why the `pkgname` argument isn't always enough.
+
+    Jamie said:
+        When you import an RPL pattern library, you have the option of using it
+        under a different, custom name.  You might do this if the package name is
+        long, to save typing a long name when you refer to an imported pattern, but
+        perhaps more importantly, in RPL the pattern name appears in the output.
+        (The pattern name ends up in the "type" field of a match.)  The ability to
+        "import X as Y" lets the pattern writer ensure that "Y.foo" is a pattern
+        type in the output, not "X.foo", if that's what they want.
+
+        By the same reasoning (having control over the output), maybe the programmer
+        wants to have X.foo appear in some places and Y.foo in others, but we don't
+        support importing the same package multiple times under different names.
+
+        $ rosie --rpl 'import net as FOO' match -o jsonpp FOO.ip <<< "127.0.0.1"
+        {"type": "FOO.ip", 
+        "data": "127.0.0.1", 
+        "e": 10, 
+        "subs": 
+        [{"type": "FOO.ipv4", 
+        "e": 10, 
+        "data": "127.0.0.1", 
+        "s": 1}], 
+        "s": 1}
+        $ 
+
+    Luke said:
+        Oh, Ok.  I misunderstood.  I've fixed the documentation in the Rust crate.
+
+Q-03.06: <<<<----CLOSED, Fixed---->>>> Along the same lines, why does `rosie_import` set `actual_pkgname` to
+    `pkg_name` in the success case, instead of to `as`?  Or why is this arg is even needed?  I.e. is there a case
+    where librosie might create a brand new name, or might sometimes return the `pkgname` and other times return
+    `as` depending on some internal logic?
+
+    Jamie said:
+        I'm glad you asked this, because it involves a subtle issue that needs to be
+        documented.  The `import X` declaration causes a search through the
+        configured list of directories (libpath) for a file X.rpl.  That is, the
+        argument to `import` specifies the base part of a file name, which resolves
+        to a "location" in the file system.
+
+        We don't know what we'll find in the file X.rpl.  For X.rpl to import
+        successfully, it must be valid RPL and have a package declaration.  But what
+        if the package name inside the file does not match the file name?  E.g.
+
+        -- file X.rpl:
+        package Y
+        test = "hi"
+
+        We allow this, mostly because file systems are weird, especially around
+        Unicode but also due to symbolic links, hard links, and other redirections.
+        So we didn't want to enforce some flavor of string equality between the file
+        name and the package declaration inside of it.
+
+        And this is why `rosie_import` returns an "actual package name", which is
+        the name that it found in the package declaration inside the file.
+        Importantly, the declared package name is the name used in RPL patterns.
+        For example, this should work (provided the directory containing X.rpl is in
+        /tmp):
+
+        $ rosie --libpath /tmp --rpl 'import X; pat = Y.test' match -o jsonpp pat <<< "hi"
+        {"data": "hi", 
+        "s": 1, 
+        "type": "pat", 
+        "e": 3}
+        $ 
+
+        In the example above, the pattern being matched is Y.test, not X.test.
+
+        It is certainly not a best practice to put an RPL package in a file that has
+        a different name.  The primary use case for supporting it is to cope with
+        file system limitations (Unicode) and fancy features (links).
+
+        There's an additional use case, though it remains hypothetical in the sense
+        that I don't know if anyone is doing this.  The `import` statement (and API)
+        can have as its argument a path (interpreted relative to a libpath
+        directory) and not just a base file name.
+
+        This feature allows us to organize pattern packages, perhaps by topic, but
+        also by language (human language, like English).  Suppose instead of a
+        single date.rpl file, we created a `date` directory in one of our libpath
+        directories.  Within the `date` directory, we could have several files,
+        e.g. 
+        date/es.rpl           // Names of days, months en Español
+        date/fr.rpl           // Names of days, months en Français
+        date/en.rpl           // Names of days, months in English
+
+        If all of these files contained the declaration `package date`, then we can
+        write a bunch of RPL patterns using date.xyz, where xyz is defined in all of
+        those files.  We can `import date/es` to get the Spanish date patterns,
+        knowing that because es.rpl contains `package date`, we can use date.xyz in
+        our own patterns.
+
+        Of course, we could organize our files another way, such as by language
+        first, and then topic: 
+        es/date.rpl           // enero, febrero, lunes, martes, ...
+        fr/date.rpl           // janvier, février, ...
+        en/date.rpl           // January, February, ...
+
+        In this case, we don't have any need for the file name to be different from
+        the package name.  (Unless we allow the Spanish team to call their file
+        es/fecha.rpl instead -- which is fine, as long as it has `package date`
+        inside.)
+
+    Luke said:
+        I've updated the documentation in the Rust crate, but did not include the complete information
+        from your response.  If you incorporate the above into a Rosie document, I'll link to it from the
+        Rust crate docs.
 
 Q-03.07: How should I think about the `start` index for `rosie_match` & `rosie_trace`?  It seems to be 1-based.  But what
     does passing 0 signify conceptually?  Empirically, passing 0 just seems to mess everything up.
