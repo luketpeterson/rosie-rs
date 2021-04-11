@@ -777,8 +777,15 @@ Q-05.07: Search & Replace. The "shape" of a search & replace function might depe
     creating an efficient implementation. 
 
 Q-05.08: Meta-Match-State: This idea is way out there, but I figured I'd throw it out.  Consider `date.any` again.
-    I know my example is flawed because there is no eur_dashed format, that would be analogous to the us_dashed format,
-    but imagine there were.  Now consider that modified date.any matching this sequence of values: 
+    date.any is composed of 6 different date patterns in a "Choice List" (Choice List is what I'm calling a list
+    separated by '/').  I understand that Rosie iterates through choice lists linearly until it finds the first list
+    element that matches.  However, what if we had an alternate form of ChoiceList where each element was given
+    conceptually equal rank?  Basically externalizing the logic to select which choice to match in a choice list
+    with multiple matches.
+
+    Back to date.any as an example.  I know this example is flawed because there is no eur_dashed format, that would
+    be analogous to the us_dashed format, but imagine there were.  Now consider that modified date.any matching this
+    sequence of values: 
     "26-04-2017", "08-04-2017", etc.
 
     In the example, the first item is unambiguously `eur_dashed`, because 26 is outside the range for month.  However,
@@ -793,6 +800,12 @@ Q-05.08: Meta-Match-State: This idea is way out there, but I figured I'd throw i
     idea is simply to allow some data elements to be useful in resolving ambiguity in other data elements from the
     same data set.  As if the match were creating a single mapping for the whole data-set and not an individual mapping
     for each data element from the set.
+
+Q-05.09: Disposable RosieEngines: You (Jamie) made a comment earlier (in Q-01.01) about the fact that additional engines
+    are "really cheap" to initialize once the rosie core has been bootstrapped.  Are they so cheap that a high-level
+    API could create a brand-new engine for each compiled pattern?  Would there be any other downside to this approach?
+
+    It seems like it could simplify the API from the user's perspective.
 
 Section 6, Misc
 
