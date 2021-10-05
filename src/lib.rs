@@ -39,87 +39,20 @@
 //! ```
 //! 
 
-use std::marker::PhantomData;
 use std::ptr;
-use std::slice;
 use std::slice::Iter;
 use std::str;
 use std::convert::{TryFrom, TryInto};
-use std::ffi::CString;
+use std::path::{Path, PathBuf};
 
-extern crate libc;
-use libc::{size_t, c_void};
+extern crate rosie_sys;
+use rosie_sys::{*};
 
-//---Discussion about RosieString (rstr in librosie)---
-//Strings in librose can either be allocated by the librosie library or allocated by the client.  The buffer containing
-//the actual bytes therefore must be freed or not freed depending on knowledge of where the string came from.  This
-//makes a straightforward wrapper in Rust problematic.  It would be possible to expose a smart wrapper with knowledge
-//about whether a buffer should be freed or not, but this adds extra complexity and overhead.  In fact I already wrote
-//this and then decided against it after seeing how it looked and realizing there was very little need to expose
-//librosie strings to Rust.
-//
-//Now, the RosieString struct is kept private, but we expose a specialized variant called RosieMessage.  A RosieMessage
-//is a RosieString that was allocated by librosie, but where the librosie client is responsible for freeing it.
-//Therefore, RosieMessage implements the Rust Drop trait to clean up its buffer when it is no longer needed.
-//
-//Simply put, RosieString doesn't own its buffer, and it's basically a glorified pointer.  RosieMessage does own its
-//buffer, and frees it when dropped.  But the memory layout of both structures is identical.
-
-#[derive(Debug, Copy, Clone)]
-#[repr(C)]
-struct RosieString<'a> {
-    len: u32,
-    ptr: *const u8, //This pointer really has a lifetime of 'a, hence the phantom
-    phantom: PhantomData<&'a u8>,
-}
-
-//100% private to this crate
-impl RosieString<'_> {
-    fn manual_drop(&mut self) {
-        if self.ptr != ptr::null() {
-            unsafe { rosie_free_string(*self); }
-            self.len = 0;
-            self.ptr = ptr::null();
-        }
-    }
-    fn empty() -> RosieString<'static> {
-        RosieString {
-            len: 0,
-            ptr: ptr::null(),
-            phantom: PhantomData
-        }
-    }
-    fn into_bytes<'a>(self) -> &'a[u8] {
-        if self.ptr != ptr::null() {
-            unsafe{ slice::from_raw_parts(self.ptr, usize::try_from(self.len).unwrap()) }
-        } else {
-            "".as_bytes()
-        }
-    }
-    fn into_str<'a>(self) -> &'a str {
-        str::from_utf8(self.into_bytes()).unwrap()
-    }
-    fn from_str<'a>(s: &'a str) -> RosieString<'a> {
-        unsafe { rosie_string_from(s.as_ptr(), s.len()) }
-    }
-    fn is_valid(&self) -> bool {
-        self.ptr != ptr::null()
-    }
-    fn as_bytes(&self) -> &[u8] {
-        if self.ptr != ptr::null() {
-            unsafe{ slice::from_raw_parts(self.ptr, usize::try_from(self.len).unwrap()) }
-        } else {
-            "".as_bytes()
-        }
-    }
-    fn as_str(&self) -> &str {
-        let string_slice = self.as_bytes();
-        str::from_utf8(string_slice).unwrap()
-    }
-    fn len(&self) -> usize {
-        usize::try_from(self.len).unwrap()
-    }
-}
+//Public re-exports
+pub use rosie_sys::RosieError;
+pub use rosie_sys::MatchEncoder;
+pub use rosie_sys::TraceFormat;
+pub use rosie_sys::RawMatchResult;
 
 /// A buffer to obtain text from Rosie.
 /// 
@@ -134,7 +67,6 @@ impl RosieString<'_> {
 /// engine.compile_pattern("invalid pattern", Some(&mut message));
 /// println!("{}", message.as_str());
 /// ```
-
 #[derive(Debug)]
 pub struct RosieMessage(RosieString<'static>);
 
@@ -173,131 +105,19 @@ impl RosieMessage {
     }
 }
 
-/// An error code from a Rosie operation 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub enum RosieError {
-    /// No error occurred.
-    Success = 0,
-    /// An unknown error occurred.
-    MiscErr = -1,
-    /// The Rosie Engine could not allocate the needed memory, either because the system allocator failed or because the limit
-    /// set by [set_mem_alloc_limit](RosieEngine::set_mem_alloc_limit) was reached.  See [set_mem_alloc_limit](RosieEngine::set_mem_alloc_limit),
-    /// [mem_alloc_limit](RosieEngine::mem_alloc_limit), and [mem_usage](RosieEngine::mem_usage) for more details.
-    OutOfMemory = -2,
-    /// A system API call failed.
-    SysCallFailed = -3,
-    /// A failure occurred in the `librosie` engine.
-    EngineCallFailed = -4,
-    /// An error related to a pattern input has occurred, for example, an `rpl` syntax error.
-    PatternError = -1001,
-    /// An error related to a package input has occurred, for example a missing package or `.rpl` file,
-    /// a missing package declaration in the file, or another syntax error in the package.rpl file.
-    PackageError = -1002,
-    /// An invalid argument was passed to a rosie function.
-    ArgError = -1003,
-}
-
-impl RosieError {
-    fn from(code: i32) -> Self {
-        match code {
-            0 => RosieError::Success,
-            -2 => RosieError::OutOfMemory,
-            -3 => RosieError::SysCallFailed,
-            -4 => RosieError::EngineCallFailed,
-            _ => RosieError::MiscErr
-        }
-    }
-}
-
-/// An Encoder Module used to format the results, when using [match_pattern_raw](RosieEngine::match_pattern_raw).
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub enum MatchEncoder {
-    /// The simplest and fastest encoder.  Outputs `true` if the pattern matched and `false` otherwise.
-    Bool,
-    /// A compact encoding of the match information into an array of bytes.
-    Byte,
-    /// A human-readable format using ANSI text coloring for different elements.  The colors associated with each element
-    /// can be customized by **Q-04.02 QUESTION FOR A ROSIE EXPERT: Where is this documented?**
-    Color,
-    /// A json-encoded match structure.
-    JSON,
-    /// The same data as [JSON](MatchEncoder::JSON), except formatted for better readability.
-    JSONPretty,
-    /// Each matching line from the input will be a line in the output.
-    Line,
-    /// The matching subset of each input line will be a line in the output.
-    Matches,
-    /// The subset of the input matched by each sub-expression of the pattern will be a line in the output.
-    Subs,
-    /// The output of a custom encoder module, implemented in `Lua`.  Documentation on implementing encoder modules can
-    /// be found **Q-04.03 QUESTION FOR A ROSIE EXPERT: Where is this documented?**
-    Custom(CString),
-}
-
-impl MatchEncoder {
-    /// Create a MatchEncoder, that calls the `Lua` function name specified by the argument.
-    pub fn custom(name : &str) -> Self {
-        MatchEncoder::Custom(CString::new(name.as_bytes()).unwrap())
-    }
-    fn as_bytes(&self) -> &[u8] {
-        match self {
-            MatchEncoder::Bool => b"bool\0",
-            MatchEncoder::Byte => b"byte\0",
-            MatchEncoder::Color => b"color\0",
-            MatchEncoder::JSON => b"json\0",
-            MatchEncoder::JSONPretty => b"jsonpp\0",
-            MatchEncoder::Line => b"line\0",
-            MatchEncoder::Matches => b"matches\0",
-            MatchEncoder::Subs => b"subs\0",
-            MatchEncoder::Custom(name) => name.as_bytes_with_nul(),
-        }
-    }
-}
-
-/// A format for debugging output, to be used with [trace_pattern](RosieEngine::trace_pattern).
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub enum TraceFormat {
-    /// The complete trace data, formatted as JSON 
-    JSON,
-    /// The complete trace data, formatted in a multi-line human-readable format
-    Full,
-    /// Redacted trace data, containing only the parts of the expression most useful for understanding why a
-    /// pattern failed to match, presented in a multi-line human-readable format
-    Condensed
-}
-
-impl TraceFormat {
-    fn as_bytes(&self) -> &[u8] {
-        match self {
-            TraceFormat::JSON => b"json\0",
-            TraceFormat::Full => b"full\0",
-            TraceFormat::Condensed => b"condensed\0"
-        }
-    }
-}
-
 /// The Rust object representing a Rosie engine.  
 /// 
 /// **NOTE**: RosieEngines are not internally thread-safe, but you may create more than one RosieEngine in order to use multiple threads.
-#[repr(C)]
-pub struct RosieEngine<'a> {
-    e: *mut c_void, //This pointer really has a lifetime of 'a, hence the phantom
-    phantom: PhantomData<&'a u8>,
-}
+pub struct RosieEngine<'a>(EnginePtr<'a>);
 
 //Give librosie a chance to clean up the engine
 impl Drop for RosieEngine<'_> {
     fn drop(&mut self) {
-        unsafe{ rosie_finalize(self.copy_self()); }
+        unsafe{ rosie_finalize(self.0); }
     }
 }
 
 impl RosieEngine<'_> {
-    //Internal function that should compile to a no-op.  Prepare the engine arg to call into C without moving out of self
-    //THIS FUNCTION DOES NOT COPY THE ENGINE.  It only copies the pointer to the engine.
-    fn copy_self(&self) -> Self {
-        RosieEngine{e: self.e, phantom : self.phantom}
-    }
     /// Creates a new RosieEngine.
     /// 
     /// If this operation fails then an error message can be obtained by passing a mutable reference to a [RosieMessage].
@@ -305,7 +125,7 @@ impl RosieEngine<'_> {
         
         let mut message_buf = RosieString::empty();
 
-        let rosie_engine = unsafe { rosie_new(&mut message_buf) };
+        let engine_ptr = unsafe { rosie_new(&mut message_buf) };
 
         if let Some(result_message) = messages {
             result_message.0.manual_drop(); //We're overwriting the string that was there
@@ -314,18 +134,19 @@ impl RosieEngine<'_> {
             message_buf.manual_drop();
         }
 
-        if rosie_engine.e as *const _ != ptr::null() {
-            Ok(rosie_engine)
+        if engine_ptr.e as *const _ != ptr::null() {
+            Ok(RosieEngine(engine_ptr))
         } else {
             Err(RosieError::MiscErr)
         }
     }
     /// Returns the file-system path to the directory containing the standard pattern library used by the RosieEngine.
+    //GOAT, should return a Path
     pub fn lib_path(&self) -> Result<&str, RosieError> {
 
         let mut path_rosie_string = RosieString::empty();
         
-        let result_code = unsafe { rosie_libpath(self.copy_self(), &mut path_rosie_string) };
+        let result_code = unsafe { rosie_libpath(self.0, &mut path_rosie_string) };
 
         if result_code == 0 {
             Ok(path_rosie_string.into_str())
@@ -336,13 +157,14 @@ impl RosieEngine<'_> {
     /// Sets the directory to use when loading packages from the standard pattern library.
     /// 
     /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as any other operations that load rpl code using the `import` directive.
+    //GOAT, filename should be a AsRef<Path>
     pub fn set_lib_path(&mut self, new_path : &str) -> Result<(), RosieError> {
 
         let mut path_rosie_string = RosieString::from_str(new_path);
 
         //Q-03.09.A QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
         
-        let result_code = unsafe { rosie_libpath(self.copy_self(), &mut path_rosie_string) };
+        let result_code = unsafe { rosie_libpath(self.0, &mut path_rosie_string) };
 
         if result_code == 0 {
             Ok(())
@@ -357,7 +179,7 @@ impl RosieEngine<'_> {
         let mut new_limit : i32 = -1;
         let mut usage : i32 = 0;
 
-        let result_code = unsafe { rosie_alloc_limit(self.copy_self(), &mut new_limit, &mut usage) };
+        let result_code = unsafe { rosie_alloc_limit(self.0, &mut new_limit, &mut usage) };
 
         if result_code == 0 {
             Ok(usize::try_from(new_limit).unwrap())
@@ -378,7 +200,7 @@ impl RosieEngine<'_> {
         let mut new_limit_mut = i32::try_from(new_limit).unwrap();
         let mut usage : i32 = 0;
 
-        let result_code = unsafe { rosie_alloc_limit(self.copy_self(), &mut new_limit_mut, &mut usage) };
+        let result_code = unsafe { rosie_alloc_limit(self.0, &mut new_limit_mut, &mut usage) };
 
         if result_code == 0 {
             Ok(())
@@ -391,7 +213,7 @@ impl RosieEngine<'_> {
         let mut new_limit : i32 = -1;
         let mut usage : i32 = 0;
 
-        let result_code = unsafe { rosie_alloc_limit(self.copy_self(), &mut new_limit, &mut usage) };
+        let result_code = unsafe { rosie_alloc_limit(self.0, &mut new_limit, &mut usage) };
 
         if result_code == 0 {
             Ok(usize::try_from(usage).unwrap())
@@ -406,7 +228,7 @@ impl RosieEngine<'_> {
 
         let mut config_buf = RosieString::empty();
 
-        let result_code = unsafe { rosie_config(self.copy_self(), &mut config_buf) };
+        let result_code = unsafe { rosie_config(self.0, &mut config_buf) };
 
         let config_message = RosieMessage(config_buf);
 
@@ -441,7 +263,7 @@ impl RosieEngine<'_> {
 
         let expression_rosie_string = RosieString::from_str(expression);
 
-        let result_code = unsafe { rosie_compile(self.copy_self(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
+        let result_code = unsafe { rosie_compile(self.0, &expression_rosie_string, &mut pat_idx, &mut message_buf) };
 
         if let Some(result_message) = messages {
             result_message.0.manual_drop(); //We're overwriting the string that was there
@@ -462,7 +284,7 @@ impl RosieEngine<'_> {
     }
     /// Frees a pattern that was previously compiled with [compile_pattern](RosieEngine::compile_pattern).
     pub fn free_pattern(&mut self, pattern_id : PatternID) -> Result<(), RosieError> {
-        let result_code = unsafe { rosie_free_rplx(self.copy_self(), pattern_id.0) };
+        let result_code = unsafe { rosie_free_rplx(self.0, pattern_id.0) };
 
         if result_code == 0 {
             Ok(())
@@ -518,7 +340,7 @@ impl RosieEngine<'_> {
         let input_rosie_string = RosieString::from_str(input);
         let mut match_result = RawMatchResult::empty();
 
-        let result_code = unsafe{ rosie_match(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
+        let result_code = unsafe{ rosie_match(self.0, pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
 
         if result_code == 0 {
             Ok(match_result)
@@ -577,7 +399,7 @@ impl RosieEngine<'_> {
         trace.0.manual_drop(); //We'll be overwriting whatever string was already there
 
         //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
-        let result_code = unsafe { rosie_trace(self.copy_self(), pattern_id.0, i32::try_from(start).unwrap(), format.as_bytes().as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
+        let result_code = unsafe { rosie_trace(self.0, pattern_id.0, i32::try_from(start).unwrap(), format.as_bytes().as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
 
         if result_code == 0 {
             if matched == 1 {
@@ -603,7 +425,7 @@ impl RosieEngine<'_> {
         let mut message_buf = RosieString::empty();
         let mut ok : i32 = 0;
 
-        let result_code = unsafe { rosie_load(self.copy_self(), &mut ok, &rpl_text_rosie_string, &mut pkg_name, &mut message_buf) };
+        let result_code = unsafe { rosie_load(self.0, &mut ok, &rpl_text_rosie_string, &mut pkg_name, &mut message_buf) };
 
         if let Some(result_message) = messages {
             result_message.0.manual_drop(); //We're overwriting the string that was there
@@ -629,6 +451,7 @@ impl RosieEngine<'_> {
     /// 
     /// **NOTE**: The file must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
+    //GOAT, filename should be a AsRef<Path>
     pub fn load_pkg_from_file(&mut self, file_name : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
         let file_name_rosie_string = RosieString::from_str(file_name);
@@ -636,7 +459,7 @@ impl RosieEngine<'_> {
         let mut message_buf = RosieString::empty();
         let mut ok : i32 = 0;
 
-        let result_code = unsafe { rosie_loadfile(self.copy_self(), &mut ok, &file_name_rosie_string, &mut pkg_name, &mut message_buf) };
+        let result_code = unsafe { rosie_loadfile(self.0, &mut ok, &file_name_rosie_string, &mut pkg_name, &mut message_buf) };
 
         if let Some(result_message) = messages {
             result_message.0.manual_drop(); //We're overwriting the string that was there
@@ -698,7 +521,7 @@ impl RosieEngine<'_> {
         let mut message_buf = RosieString::empty();
         let mut ok : i32 = 0;
 
-        let result_code = unsafe { rosie_import(self.copy_self(), &mut ok, &in_pkg_name, &in_alias, &mut out_pkg_name, &mut message_buf) };
+        let result_code = unsafe { rosie_import(self.0, &mut ok, &in_pkg_name, &in_alias, &mut out_pkg_name, &mut message_buf) };
         
         if let Some(result_message) = messages {
             result_message.0.manual_drop(); //We're overwriting the string that was there
@@ -726,62 +549,6 @@ impl RosieEngine<'_> {
 /// PatternIDs are created by [compile_pattern](RosieEngine::compile_pattern), and the patterns they represent can be freed with [free_pattern](RosieEngine::free_pattern).
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct PatternID(i32);
-
-/// A structure containing the match results from a [match_pattern_raw](RosieEngine::match_pattern_raw) call.
-/// 
-/// **NOTE**: A RawMatchResult takes a mutable borrow of a [RosieEngine], and thus renders the engine inaccessible
-/// while the RawMatchResult is in use.  Copying the data from the RawMatchResult will allow the `engine` to be released.
-#[repr(C)]
-#[derive(Debug)]
-pub struct RawMatchResult<'a> {
-    data: RosieString<'a>,
-    leftover: i32,
-    abend: i32,
-    ttotal: i32,
-    tmatch: i32
-}
-
-impl RawMatchResult<'_> {
-    //Private
-    fn empty() -> Self {
-        Self {
-            data: RosieString::empty(),
-            leftover: 0,
-            abend: 0,
-            ttotal: 0,
-            tmatch: 0
-        }
-    }
-    /// Returns `true` if the pattern was matched in the input, otherwise returns `false`.
-    pub fn did_match(&self) -> bool {
-        if self.data.is_valid() {
-            return true;
-        }
-        //The "bool" encoder returns 1 in the len field to indicate a match, even if the ptr is NULL
-        if self.data.len() == 1 {
-            return true;
-        }
-        false
-    }
-    /// Returns the raw buffer, outputted by the encoder during the match operation
-    pub fn as_bytes(&self) -> &[u8] {
-        self.data.as_bytes()
-    }
-    /// Returns the match buffer, interpreted as a UTF-8 string
-    pub fn as_str(&self) -> &str {
-        self.data.as_str()
-    }
-    /// Returns the time, in microseconds, elapsed during the call to [match_pattern_raw](RosieEngine::match_pattern_raw)
-    pub fn time_elapsed_total(&self) -> usize {
-        usize::try_from(self.ttotal).unwrap()
-    }
-    /// Returns the time, in microseconds, elapsed matching the pattern against the input.
-    /// 
-    /// This value excludes time spend encoding the results
-    pub fn time_elapsed_matching(&self) -> usize {
-        usize::try_from(self.tmatch).unwrap()
-    }
-}
 
 //A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
 //TODO: Roll this out into a stand-alone crate
@@ -905,7 +672,7 @@ impl MatchResult<'_> {
         }
     }
     fn from_byte_match_result<'input>(input : &'input str, src_result : RawMatchResult) -> MatchResult<'input> {
-        let mut data_buf_ref = src_result.data.as_bytes();
+        let mut data_buf_ref = src_result.as_bytes();
         MatchResult::from_bytes_buffer(input, &mut data_buf_ref, None)
     }
     fn new_no_match() -> MatchResult<'static> {
@@ -944,44 +711,6 @@ impl MatchResult<'_> {
     }
 }
 
-//Interfaces to the raw librosie functions
-//NOTE: Not all interfaces are imported by the Rust driver
-//NOTE: The 'static lifetime in the returned values is a LIE! The calling code needs to assign the lifetimes appropriately
-//NOTE: This should eventually be moved into a separate `rosie-sys` crate, responsible for building librosie from source,
-//  exposing this (unsafe) interface, and nothing more.
-extern "C" {
-    fn rosie_new_string(msg : *const u8, len : size_t) -> RosieString<'static>; // str rosie_new_string(byte_ptr msg, size_t len);
-    // str *rosie_new_string_ptr(byte_ptr msg, size_t len);
-    // str *rosie_string_ptr_from(byte_ptr msg, size_t len);
-    fn rosie_string_from(msg : *const u8, len : size_t) -> RosieString<'static>; // str rosie_string_from(byte_ptr msg, size_t len);
-    fn rosie_free_string(s : RosieString); // void rosie_free_string(str s);
-    // void rosie_free_string_ptr(str *s);
-    
-    fn rosie_new(messages : *mut RosieString) -> RosieEngine; // Engine *rosie_new(str *messages);
-    fn rosie_finalize(e : RosieEngine); // void rosie_finalize(Engine *e);
-    fn rosie_libpath(e : RosieEngine, newpath : *mut RosieString) -> i32;// int rosie_libpath(Engine *e, str *newpath);
-    fn rosie_alloc_limit(e : RosieEngine, newlimit : *mut i32, usage : *mut i32) -> i32;// int rosie_alloc_limit(Engine *e, int *newlimit, int *usage);
-    fn rosie_config(e : RosieEngine, retvals : *mut RosieString) -> i32;// int rosie_config(Engine *e, str *retvals);
-    fn rosie_compile(e : RosieEngine, expression : *const RosieString, pat : *mut i32, messages : *mut RosieString) -> i32; // int rosie_compile(Engine *e, str *expression, int *pat, str *messages);
-    fn rosie_free_rplx(e : RosieEngine, pat : i32) -> i32; // int rosie_free_rplx(Engine *e, int pat);
-    fn rosie_match(e : RosieEngine, pat : i32, start : i32, encoder : *const u8, input : *const RosieString, match_result : *mut RawMatchResult) -> i32; // int rosie_match(Engine *e, int pat, int start, char *encoder, str *input, match *match);
-    //fn rosie_matchfile(e : RosieEngine, pat : i32, encoder : *const u8, wholefileflag : i32, infilename : *const u8, outfilename : *const u8, errfilename : *const u8, cin : *mut i32, cout : *mut i32, cerr : *mut i32, err : *mut RosieString); // int rosie_matchfile(Engine *e, int pat, char *encoder, int wholefileflag, char *infilename, char *outfilename, char *errfilename, int *cin, int *cout, int *cerr, str *err);
-    fn rosie_trace(e : RosieEngine, pat : i32, start : i32, trace_style : *const u8, input : *const RosieString, matched : &mut i32, trace : *mut RosieString) -> i32; // int rosie_trace(Engine *e, int pat, int start, char *trace_style, str *input, int *matched, str *trace);
-    fn rosie_load(e : RosieEngine, ok : *mut i32, rpl_text : *const RosieString, pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_load(Engine *e, int *ok, str *src, str *pkgname, str *messages);
-    fn rosie_loadfile(e : RosieEngine, ok : *mut i32, file_name : *const RosieString, pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_loadfile(Engine *e, int *ok, str *fn, str *pkgname, str *messages);
-    fn rosie_import(e : RosieEngine, ok : *mut i32, pkgname : *const RosieString, as_name : *const RosieString, actual_pkgname : *mut RosieString, messages : *mut RosieString) -> i32; // int rosie_import(Engine *e, int *ok, str *pkgname, str *as, str *actual_pkgname, str *messages);
-    // int rosie_read_rcfile(Engine *e, str *filename, int *file_exists, str *options, str *messages);
-    // int rosie_execute_rcfile(Engine *e, str *filename, int *file_exists, int *no_errors, str *messages);
-
-    // int rosie_expression_refs(Engine *e, str *input, str *refs, str *messages);
-    // int rosie_block_refs(Engine *e, str *input, str *refs, str *messages);
-    // int rosie_expression_deps(Engine *e, str *input, str *deps, str *messages);
-    // int rosie_block_deps(Engine *e, str *input, str *deps, str *messages);
-    // int rosie_parse_expression(Engine *e, str *input, str *parsetree, str *messages);
-    // int rosie_parse_block(Engine *e, str *input, str *parsetree, str *messages);
-
-}
-
 #[test]
 fn rosie_string() {
 
@@ -1015,6 +744,14 @@ fn rosie_string() {
 
 #[test]
 fn rosie_engine() {
+
+    //GOAT, This doesn't belong in this test.  We have to see how we can init this inside a singleton engine.
+    if let Some(rosie_home_dir) = rosie_home_default() {
+        //GOAT, we definitely want to make sure this path is valid before calling rosie_home_init(), because rosie_home_init() will take whatever we're selling
+        let mut message_buf = RosieString::empty();
+        unsafe{ rosie_home_init(&RosieString::from_str(&rosie_home_dir), &mut message_buf) };
+        println!("GOAT Rosie_home {}", rosie_home_dir);
+    };
 
     //Create the engine and check that it was sucessful
     let mut engine = RosieEngine::new(None).unwrap();
@@ -1077,9 +814,8 @@ fn rosie_engine() {
     assert_eq!(pkg_name.as_str(), "two_digit_year");
 
     //Test loading a package from a file
-    //TODO: This test is probably not robust against different installations with different paths to the pattern library
-    //This needs to be fixed
-    let pkg_name = engine.load_pkg_from_file("/usr/local/lib/rosie/rpl/date.rpl", None).unwrap();
+    let rpl_file = PathBuf::from(engine.lib_path().unwrap()).join("date.rpl");
+    let pkg_name = engine.load_pkg_from_file(rpl_file.to_str().unwrap(), None).unwrap();
     assert_eq!(pkg_name.as_str(), "date");
 
     //Test importing a package

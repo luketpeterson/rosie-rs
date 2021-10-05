@@ -4,18 +4,14 @@ version = "0.1.0"
 authors = ["Luke Peterson <luke@infoplatter.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
-links = "rosie"
-build = "build.rs"
-
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 libc = "*"
-
-[build-dependencies]
-cc = "1.0.18"
-pkg-config = "0.3.9"
+rosie-sys = { path = "../rosie-sys" }
+#rosie-sys = { path = "../rosie-sys", features = ["link_shared_librosie"] } #GOAT, change this to pull from crates.io before submitting
+#rosie-sys = { path = "../rosie-sys", features = ["build_static_librosie"] }
 
 [dev-dependencies]
 serde = { version = "*", features = ["derive"] }
