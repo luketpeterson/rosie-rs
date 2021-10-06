@@ -17,3 +17,7 @@ rosie-sys = { path = "../rosie-sys" }
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 
+[features]
+link_shared_librosie = ["rosie-sys/link_shared_librosie"]
+build_static_librosie = ["rosie-sys/build_static_librosie"]
+

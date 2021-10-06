@@ -44,6 +44,8 @@ use std::slice::Iter;
 use std::str;
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
+use std::mem;
+use std::fs;
 
 extern crate rosie_sys;
 use rosie_sys::{*};
@@ -53,6 +55,12 @@ pub use rosie_sys::RosieError;
 pub use rosie_sys::MatchEncoder;
 pub use rosie_sys::TraceFormat;
 pub use rosie_sys::RawMatchResult;
+
+//Global to track the state of librosie
+static mut LIBROSIE_INITIALIZED: Option<bool> = Some(false);
+
+//Global per-thread singleton engines
+//GOAT
 
 /// A buffer to obtain text from Rosie.
 /// 
@@ -105,6 +113,45 @@ impl RosieMessage {
     }
 }
 
+//Private function to make sure librosie is initialized, and initialize it if it isn't
+fn librosie_init() {
+
+    //Get the global status var, or spin lock until we can get it
+    //NOTE: this is unnecessary for now because the librosie `rosie_home_init` entry point is also thread safe and calling it multiple
+    //times wil have no effect.  However, if we have our own code that we want to make sure is only run once, this might be handy.
+    loop {
+        let init_status = unsafe{ mem::replace(&mut LIBROSIE_INITIALIZED, None) }; //std::mem::replace is an atomic operation
+        if let Some(init_status) = init_status {
+
+            //If librosie isn't initialized yet, then initialize it
+            let new_status = if !init_status {
+
+                if let Some(rosie_home_dir) = rosie_home_default() {
+
+                    //Make sure the path from rosie_home_default() is a valid directory before calling rosie_home_init(),
+                    // because rosie_home_init() will buy whatever we're selling, even if it's garbage
+                    let path = Path::new(rosie_home_dir);
+                    if let Ok(dir_metadata) = fs::metadata(path) {
+                        if dir_metadata.is_dir() {
+                            let mut message_buf = RosieString::empty();
+                            unsafe{ rosie_home_init(&RosieString::from_str(&rosie_home_dir), &mut message_buf) };
+                        }
+                    }
+                }
+
+                true
+            } else {
+                true
+            };
+
+            //Replace the global var, so other threads will unblock, and then break out of the spinlock loop
+            unsafe{ mem::replace(&mut LIBROSIE_INITIALIZED, Some(new_status)) };
+            break;
+        }
+    }
+
+}
+
 /// The Rust object representing a Rosie engine.  
 /// 
 /// **NOTE**: RosieEngines are not internally thread-safe, but you may create more than one RosieEngine in order to use multiple threads.
@@ -123,6 +170,9 @@ impl RosieEngine<'_> {
     /// If this operation fails then an error message can be obtained by passing a mutable reference to a [RosieMessage].
     pub fn new(messages : Option<&mut RosieMessage>) -> Result<Self, RosieError> {
         
+        //Make sure librosie is initialized.  This is basically a noop if it is
+        librosie_init();
+
         let mut message_buf = RosieString::empty();
 
         let engine_ptr = unsafe { rosie_new(&mut message_buf) };
@@ -141,7 +191,7 @@ impl RosieEngine<'_> {
         }
     }
     /// Returns the file-system path to the directory containing the standard pattern library used by the RosieEngine.
-    //GOAT, should return a Path
+    //GOAT, should return a Path.
     pub fn lib_path(&self) -> Result<&str, RosieError> {
 
         let mut path_rosie_string = RosieString::empty();
@@ -745,13 +795,14 @@ fn rosie_string() {
 #[test]
 fn rosie_engine() {
 
-    //GOAT, This doesn't belong in this test.  We have to see how we can init this inside a singleton engine.
-    if let Some(rosie_home_dir) = rosie_home_default() {
-        //GOAT, we definitely want to make sure this path is valid before calling rosie_home_init(), because rosie_home_init() will take whatever we're selling
-        let mut message_buf = RosieString::empty();
-        unsafe{ rosie_home_init(&RosieString::from_str(&rosie_home_dir), &mut message_buf) };
-        println!("GOAT Rosie_home {}", rosie_home_dir);
-    };
+    //GOAT.  Make direct-engine API
+    //GOAT.  Make "default-engine" API
+    //  Take stock of what config entry points exist.  Possibly I don't need a way to access the default engine directly, which is better.
+    //      If it does make sense to access the default engine:
+    //          Get default Engine (for a given thread)
+    //          Config sync across the different threads
+    //  Compile pattern into a wrapped object.
+    //  Match pattern
 
     //Create the engine and check that it was sucessful
     let mut engine = RosieEngine::new(None).unwrap();
