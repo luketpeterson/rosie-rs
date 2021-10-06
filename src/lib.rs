@@ -113,12 +113,21 @@ impl RosieMessage {
     }
 }
 
-//Private function to make sure librosie is initialized, and initialize it if it isn't
-fn librosie_init() {
+/// This function can be used to set a custom location for the rosie_home path.
+/// 
+/// **WARNING** This function must be called before any other rosie calls, or it will not be sucessful
+pub fn set_rosie_home_path<P: AsRef<Path>>(path: P) {
+    librosie_init(Some(path))
+}
+
+//Private function to make sure librosie is initialized and initialize it if it isn't
+//Internal NOTE: This function is responsible for internal librosie initialization, so it is also called by RosieEngine::new()
+fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
 
     //Get the global status var, or spin lock until we can get it
-    //NOTE: this is unnecessary for now because the librosie `rosie_home_init` entry point is also thread safe and calling it multiple
-    //times wil have no effect.  However, if we have our own code that we want to make sure is only run once, this might be handy.
+    //NOTE: this spin-locking is unnecessary for now because the librosie `rosie_home_init` entry point is also thread safe and
+    //calling it multiple times wil have no effect.  However, if we have our own code that we want to make sure is only run
+    //once, this might be handy.
     loop {
         let init_status = unsafe{ mem::replace(&mut LIBROSIE_INITIALIZED, None) }; //std::mem::replace is an atomic operation
         if let Some(init_status) = init_status {
@@ -126,20 +135,32 @@ fn librosie_init() {
             //If librosie isn't initialized yet, then initialize it
             let new_status = if !init_status {
 
-                if let Some(rosie_home_dir) = rosie_home_default() {
+                let mut did_init = false;
 
-                    //Make sure the path from rosie_home_default() is a valid directory before calling rosie_home_init(),
-                    // because rosie_home_init() will buy whatever we're selling, even if it's garbage
-                    let path = Path::new(rosie_home_dir);
-                    if let Ok(dir_metadata) = fs::metadata(path) {
+                //Decide among the different paths we might use
+                let dir_path = if let Some(dir_path) = path {
+                    Some(PathBuf::from(dir_path.as_ref())) // If we were passed a path, use it.
+                } else {
+                    if let Some(default_path_str) = rosie_home_default() {
+                        Some(PathBuf::from(default_path_str)) //We will pass the path compiled into our binary
+                    } else {
+                        None //We will let librosie try to find it
+                    }
+                };
+
+                //Make sure the path is a valid directory before calling rosie_home_init(),
+                // because rosie_home_init() will buy whatever we're selling, even if it's garbage
+                if let Some(dir_path) = dir_path {
+                    if let Ok(dir_metadata) = fs::metadata(&dir_path) {
                         if dir_metadata.is_dir() {
                             let mut message_buf = RosieString::empty();
-                            unsafe{ rosie_home_init(&RosieString::from_str(&rosie_home_dir), &mut message_buf) };
+                            unsafe{ rosie_home_init(&RosieString::from_str(&dir_path.to_str().unwrap()), &mut message_buf) };
+                            did_init = true;
                         }
                     }
                 }
-
-                true
+                
+                did_init
             } else {
                 true
             };
@@ -149,7 +170,6 @@ fn librosie_init() {
             break;
         }
     }
-
 }
 
 /// The Rust object representing a Rosie engine.  
@@ -171,7 +191,7 @@ impl RosieEngine<'_> {
     pub fn new(messages : Option<&mut RosieMessage>) -> Result<Self, RosieError> {
         
         //Make sure librosie is initialized.  This is basically a noop if it is
-        librosie_init();
+        librosie_init::<&Path>(None);
 
         let mut message_buf = RosieString::empty();
 
@@ -865,7 +885,7 @@ fn rosie_engine() {
     assert_eq!(pkg_name.as_str(), "two_digit_year");
 
     //Test loading a package from a file
-    let rpl_file = PathBuf::from(engine.lib_path().unwrap()).join("date.rpl");
+    let rpl_file = Path::new(engine.lib_path().unwrap()).join("date.rpl");
     let pkg_name = engine.load_pkg_from_file(rpl_file.to_str().unwrap(), None).unwrap();
     assert_eq!(pkg_name.as_str(), "date");
 
