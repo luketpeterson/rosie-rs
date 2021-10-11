@@ -8,8 +8,9 @@ license = "MIT OR Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "*"
+libc = "0.2.103"
 rosie-sys = { path = "../rosie-sys" }
+once_cell = "1.8.0" # As soon as std::sync::SyncLazy is pushed to stable, we will migrate there and eliminate this dependency
 #rosie-sys = { path = "../rosie-sys", features = ["link_shared_librosie"] } #GOAT, change this to pull from crates.io before submitting
 #rosie-sys = { path = "../rosie-sys", features = ["build_static_librosie"] }
 

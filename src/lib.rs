@@ -44,8 +44,11 @@ use std::slice::Iter;
 use std::str;
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
-use std::mem;
 use std::fs;
+use std::cell::RefCell;
+use std::sync::Mutex;
+
+use once_cell::sync::Lazy; // TODO: As soon as std::sync::SyncLazy is pushed to stable, we will migrate there and eliminate this dependency
 
 extern crate rosie_sys;
 use rosie_sys::{*};
@@ -56,11 +59,20 @@ pub use rosie_sys::MatchEncoder;
 pub use rosie_sys::TraceFormat;
 pub use rosie_sys::RawMatchResult;
 
+//GOAT, Go back to my changes inside librosie, and use an atomic type for my path pointer
+
 //Global to track the state of librosie
-static mut LIBROSIE_INITIALIZED: Option<bool> = Some(false);
+static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 //Global per-thread singleton engines
-//GOAT
+//NOTE: The thread_local! macro forces us to have an initialization check (which we probably want anyway) but also
+// a RefCell (which we could probably get by without).  I don't think this matters in light of the Rosie usage
+// patterns, but if I'm wrong and we need this access to be faster, we can shave a few nanoseconds by implementing
+// thread_local access ourselves.  Unfortunately the direct accessor for the LLVM `thread_local` attribute isn't
+// stabilized yet.  https://github.com/rust-lang/rust/issues/29594  This blog has a work-around, but it would be
+// fragile because of the need to inline across langauges.  It's a good read anyway.
+// https://matklad.github.io/2020/10/03/fast-thread-locals-in-rust.html
+thread_local!{ static THREAD_ROSIE_ENGINE: RefCell<RosieEngine<'static>> = RefCell::new(RosieEngine::new(None).unwrap()) }
 
 /// A buffer to obtain text from Rosie.
 /// 
@@ -124,51 +136,38 @@ pub fn set_rosie_home_path<P: AsRef<Path>>(path: P) {
 //Internal NOTE: This function is responsible for internal librosie initialization, so it is also called by RosieEngine::new()
 fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
 
-    //Get the global status var, or spin lock until we can get it
-    //NOTE: this spin-locking is unnecessary for now because the librosie `rosie_home_init` entry point is also thread safe and
-    //calling it multiple times wil have no effect.  However, if we have our own code that we want to make sure is only run
-    //once, this might be handy.
-    loop {
-        let init_status = unsafe{ mem::replace(&mut LIBROSIE_INITIALIZED, None) }; //std::mem::replace is an atomic operation
-        if let Some(init_status) = init_status {
+    //Get the global status var, or block until we can get it
+    let mut init_status = LIBROSIE_INITIALIZED.lock().unwrap();
 
-            //If librosie isn't initialized yet, then initialize it
-            let new_status = if !init_status {
+    //If librosie isn't initialized yet, then initialize it
+    if !(*init_status) {
 
-                let mut did_init = false;
+        let mut did_init = false;
 
-                //Decide among the different paths we might use
-                let dir_path = if let Some(dir_path) = path {
-                    Some(PathBuf::from(dir_path.as_ref())) // If we were passed a path, use it.
-                } else {
-                    if let Some(default_path_str) = rosie_home_default() {
-                        Some(PathBuf::from(default_path_str)) //We will pass the path compiled into our binary
-                    } else {
-                        None //We will let librosie try to find it
-                    }
-                };
-
-                //Make sure the path is a valid directory before calling rosie_home_init(),
-                // because rosie_home_init() will buy whatever we're selling, even if it's garbage
-                if let Some(dir_path) = dir_path {
-                    if let Ok(dir_metadata) = fs::metadata(&dir_path) {
-                        if dir_metadata.is_dir() {
-                            let mut message_buf = RosieString::empty();
-                            unsafe{ rosie_home_init(&RosieString::from_str(&dir_path.to_str().unwrap()), &mut message_buf) };
-                            did_init = true;
-                        }
-                    }
-                }
-                
-                did_init
+        //Decide among the different paths we might use
+        let dir_path = if let Some(dir_path) = path {
+            Some(PathBuf::from(dir_path.as_ref())) // If we were passed a path, use it.
+        } else {
+            if let Some(default_path_str) = rosie_home_default() {
+                Some(PathBuf::from(default_path_str)) //We will pass the path compiled into our binary
             } else {
-                true
-            };
+                None //We will let librosie try to find it
+            }
+        };
 
-            //Replace the global var, so other threads will unblock, and then break out of the spinlock loop
-            unsafe{ mem::replace(&mut LIBROSIE_INITIALIZED, Some(new_status)) };
-            break;
+        //Make sure the path is a valid directory before calling rosie_home_init(),
+        // because rosie_home_init() will buy whatever we're selling, even if it's garbage
+        if let Some(dir_path) = dir_path {
+            if let Ok(dir_metadata) = fs::metadata(&dir_path) {
+                if dir_metadata.is_dir() {
+                    let mut message_buf = RosieString::empty();
+                    unsafe{ rosie_home_init(&RosieString::from_str(&dir_path.to_str().unwrap()), &mut message_buf) };
+                    did_init = true;
+                }
+            }
         }
+        
+        *init_status = did_init;
     }
 }
 
@@ -781,136 +780,194 @@ impl MatchResult<'_> {
     }
 }
 
-#[test]
-fn rosie_string() {
+#[cfg(test)]
+mod tests {
+    use crate::{*};
+    use std::thread;
+    use std::sync::mpsc;
 
-    //A basic RosieString, pointing to a static string
-    let hello_str = "hello";
-    let rosie_string = RosieString::from_str(hello_str);
-    assert_eq!(rosie_string.len(), hello_str.len());
-    assert_eq!(rosie_string.as_str(), hello_str);
+    #[test]
+    fn rosie_string() {
 
-    //A RosieString pointing to a heap-allocated string
-    let hello_string = String::from("hi there");
-    let rosie_string = RosieString::from_str(hello_string.as_str());
-    assert_eq!(rosie_string.len(), hello_string.len());
-    assert_eq!(rosie_string.as_str(), hello_string);
+        //A basic RosieString, pointing to a static string
+        let hello_str = "hello";
+        let rosie_string = RosieString::from_str(hello_str);
+        assert_eq!(rosie_string.len(), hello_str.len());
+        assert_eq!(rosie_string.as_str(), hello_str);
 
-    //Ensure we can't deallocate our rust String without deallocating our RosieString first
-    drop(hello_string);
-    //TODO: Implement a TryBuild harness in order to ensure the line below will not compile 
-    //assert!(rosie_string.is_valid());
+        //A RosieString pointing to a heap-allocated string
+        let hello_string = String::from("hi there");
+        let rosie_string = RosieString::from_str(hello_string.as_str());
+        assert_eq!(rosie_string.len(), hello_string.len());
+        assert_eq!(rosie_string.as_str(), hello_string);
 
-    //Make a RosieMessage, pointing to a heap-allocated string
-    let hello_string = String::from("howdy");
-    let rosie_message = RosieMessage::from_str(hello_string.as_str());
-    assert_eq!(rosie_message.len(), hello_string.len());
-    assert_eq!(rosie_message.as_str(), hello_string);
+        //Ensure we can't deallocate our rust String without deallocating our RosieString first
+        drop(hello_string);
+        //TODO: Implement a TryBuild harness in order to ensure the line below will not compile 
+        //assert!(rosie_string.is_valid());
 
-    //Now test that we can safely deallocate the heap-allocated String that we used to create a RosieMessage
-    drop(hello_string);
-    assert!(rosie_message.is_valid());
+        //Make a RosieMessage, pointing to a heap-allocated string
+        let hello_string = String::from("howdy");
+        let rosie_message = RosieMessage::from_str(hello_string.as_str());
+        assert_eq!(rosie_message.len(), hello_string.len());
+        assert_eq!(rosie_message.as_str(), hello_string);
+
+        //Now test that we can safely deallocate the heap-allocated String that we used to create a RosieMessage
+        drop(hello_string);
+        assert!(rosie_message.is_valid());
+    }
+
+    #[test]
+    fn default_engine() {
+        //GOAT
+    }
+
+    #[test]
+    fn explicit_engine() {
+
+        //GOAT.  Create multi-threaded test(s)
+        //  What happens if I compile a pattern on one thread's engine, and then check the pattern on another thread's engine?
+        //
+        //GOAT.  Make a multi-threaded stress-test that instantiates a large number of threads
+        //
+        //GOAT.  Make direct-engine API
+        //GOAT.  Make "default-engine" API
+        //  Take stock of what config entry points exist.  Possibly I don't need a way to access the default engine directly, which is better.
+        //      If it does make sense to access the default engine:
+        //          Get default Engine (for a given thread)
+        //          Config sync across the different threads
+        //  Compile pattern into a wrapped object.
+        //  Match pattern
+
+        //Create the engine and check that it was sucessful
+        let mut engine = RosieEngine::new(None).unwrap();
+
+        //Make sure we can get the engine config
+        let _ = engine.config_as_json().unwrap();
+
+        //Check that we can get the library path, and then set it, if needed
+        let lib_path = engine.lib_path().unwrap();
+        //println!("{}", lib_path);
+        let new_lib_path = lib_path.to_string(); //We need a copy of the string, so we can mutate the engine safely
+        engine.set_lib_path(new_lib_path.as_str()).unwrap();
+
+        //Check the alloc limit, set it to unlimited, check the usage
+        let _ = engine.mem_alloc_limit().unwrap();
+        assert!(engine.set_mem_alloc_limit(0).is_ok());
+        let _ = engine.mem_usage().unwrap();
+
+        //Compile a valid rpl pattern, and confirm there is no error
+        let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
+
+        //Make sure we can sucessfully free the pattern
+        assert!(engine.free_pattern(pat_idx).is_ok());
+        
+        //Try to compile an invalid pattern (syntax error), and check the error and error message
+        let mut message = RosieMessage::empty();
+        let compile_result = engine.compile_pattern("year = bogus", Some(&mut message));
+        assert!(compile_result.is_err());
+        assert!(message.len() > 0);
+        //println!("{}", message.as_str());
+
+        //Recompile a pattern expression and match it against a matching input using match_pattern_raw
+        let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
+        let raw_match_result = engine.match_pattern_raw(pat_idx, 1, "21", &MatchEncoder::Bool).unwrap();
+        //Validate that we can't access the engine while our raw_match_result is in use.
+        //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
+        // assert!(engine.config_as_json().is_ok());
+        assert_eq!(raw_match_result.did_match(), true);
+        assert!(raw_match_result.time_elapsed_matching() <= raw_match_result.time_elapsed_total()); //A little lame as tests go, but validates they are called at least.
+
+        //Now try the match with the high-level match_pattern call
+        let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
+        assert_eq!(match_result.pat_name_str(), "*");
+        assert_eq!(match_result.matched_str(), "21");
+        assert_eq!(match_result.start(), 1);
+        assert_eq!(match_result.end(), 3);
+        assert_eq!(match_result.sub_pat_count(), 0);
+
+        //Try it against non-matching input, and make sure we get no match
+        let match_result = engine.match_pattern(pat_idx, 1, "99").unwrap();
+        assert_eq!(match_result.did_match(), false);
+
+        //Test the trace function, and make sure we get a reasonable result
+        let mut trace = RosieMessage::empty();
+        assert!(engine.trace_pattern(pat_idx, 1, "21", TraceFormat::Condensed, &mut trace).is_ok());
+        //println!("{}", trace.as_str());
+
+        //Test loading a package from a string
+        let pkg_name = engine.load_pkg_from_str("package two_digit_year\n\nyear = {[012][0-9]}", None).unwrap();
+        assert_eq!(pkg_name.as_str(), "two_digit_year");
+
+        //Test loading a package from a file
+        let rpl_file = Path::new(engine.lib_path().unwrap()).join("date.rpl");
+        let pkg_name = engine.load_pkg_from_file(rpl_file.to_str().unwrap(), None).unwrap();
+        assert_eq!(pkg_name.as_str(), "date");
+
+        //Test importing a package
+        let pkg_name = engine.import_pkg("net", None, None).unwrap();
+        assert_eq!(pkg_name.as_str(), "net");
+
+        //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
+
+        //Test matching a pattern with some recursive sub-patterns
+        let date_pat_idx = engine.compile_pattern("date.us_long", None).unwrap();
+        let match_result = engine.match_pattern(date_pat_idx, 1, "Saturday, Nov 5, 1955").unwrap();
+        assert_eq!(match_result.pat_name_str(), "us_long");
+        assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
+        assert_eq!(match_result.start(), 1);
+        assert_eq!(match_result.end(), 22);
+        assert_eq!(match_result.sub_pat_count(), 4);
+        let sub_match_pat_names : Vec<&str> = match_result.sub_pat_iter().map(|result| result.pat_name_str()).collect();
+        assert!(sub_match_pat_names.contains(&"day_name"));
+        assert!(sub_match_pat_names.contains(&"month_name"));
+        assert!(sub_match_pat_names.contains(&"day"));
+        assert!(sub_match_pat_names.contains(&"year"));
+
+    }
+
+    #[test]
+    fn multi_threaded_default_engine() {
+
+        let (tx, rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+
+            THREAD_ROSIE_ENGINE.with(move |engine_refcell| {
+
+                for _ in 0..1 {
+                    let pat_idx = engine_refcell.borrow_mut().compile_pattern("{[012][0-9]}", None).unwrap();
+                    tx.send(pat_idx).unwrap();    
+                }
+
+            });
+        });
+
+
+        THREAD_ROSIE_ENGINE.with(move |engine_refcell| {
+
+            for received in rx {
+                println!("Got: {}", received.0);
+
+                let pat_idx = engine_refcell.borrow_mut().compile_pattern("{[012][0-9]}", None).unwrap();
+                println!("main: {}", pat_idx.0);
+        
+            }
+        
+        });
+
+
+        handle.join().unwrap();
+        
+        //GOAT
+    }
+
+    #[test]
+    fn thread_stress() {
+        //GOAT
+    }
+
 }
-
-#[test]
-fn rosie_engine() {
-
-    //GOAT.  Make direct-engine API
-    //GOAT.  Make "default-engine" API
-    //  Take stock of what config entry points exist.  Possibly I don't need a way to access the default engine directly, which is better.
-    //      If it does make sense to access the default engine:
-    //          Get default Engine (for a given thread)
-    //          Config sync across the different threads
-    //  Compile pattern into a wrapped object.
-    //  Match pattern
-
-    //Create the engine and check that it was sucessful
-    let mut engine = RosieEngine::new(None).unwrap();
-
-    //Make sure we can get the engine config
-    let _ = engine.config_as_json().unwrap();
-
-    //Check that we can get the library path, and then set it, if needed
-    let lib_path = engine.lib_path().unwrap();
-    //println!("{}", lib_path);
-    let new_lib_path = lib_path.to_string(); //We need a copy of the string, so we can mutate the engine safely
-    engine.set_lib_path(new_lib_path.as_str()).unwrap();
-
-    //Check the alloc limit, set it to unlimited, check the usage
-    let _ = engine.mem_alloc_limit().unwrap();
-    assert!(engine.set_mem_alloc_limit(0).is_ok());
-    let _ = engine.mem_usage().unwrap();
-
-    //Compile a valid rpl pattern, and confirm there is no error
-    let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
-
-    //Make sure we can sucessfully free the pattern
-    assert!(engine.free_pattern(pat_idx).is_ok());
-    
-    //Try to compile an invalid pattern (syntax error), and check the error and error message
-    let mut message = RosieMessage::empty();
-    let compile_result = engine.compile_pattern("year = bogus", Some(&mut message));
-    assert!(compile_result.is_err());
-    assert!(message.len() > 0);
-    //println!("{}", message.as_str());
-
-    //Recompile a pattern expression and match it against a matching input using match_pattern_raw
-    let pat_idx = engine.compile_pattern("{[012][0-9]}", None).unwrap();
-    let raw_match_result = engine.match_pattern_raw(pat_idx, 1, "21", &MatchEncoder::Bool).unwrap();
-    //Validate that we can't access the engine while our raw_match_result is in use.
-    //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
-    // assert!(engine.config_as_json().is_ok());
-    assert_eq!(raw_match_result.did_match(), true);
-    assert!(raw_match_result.time_elapsed_matching() <= raw_match_result.time_elapsed_total()); //A little lame as tests go, but validates they are called at least.
-
-    //Now try the match with the high-level match_pattern call
-    let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap();
-    assert_eq!(match_result.pat_name_str(), "*");
-    assert_eq!(match_result.matched_str(), "21");
-    assert_eq!(match_result.start(), 1);
-    assert_eq!(match_result.end(), 3);
-    assert_eq!(match_result.sub_pat_count(), 0);
-
-    //Try it against non-matching input, and make sure we get no match
-    let match_result = engine.match_pattern(pat_idx, 1, "99").unwrap();
-    assert_eq!(match_result.did_match(), false);
-
-    //Test the trace function, and make sure we get a reasonable result
-    let mut trace = RosieMessage::empty();
-    assert!(engine.trace_pattern(pat_idx, 1, "21", TraceFormat::Condensed, &mut trace).is_ok());
-    //println!("{}", trace.as_str());
-
-    //Test loading a package from a string
-    let pkg_name = engine.load_pkg_from_str("package two_digit_year\n\nyear = {[012][0-9]}", None).unwrap();
-    assert_eq!(pkg_name.as_str(), "two_digit_year");
-
-    //Test loading a package from a file
-    let rpl_file = Path::new(engine.lib_path().unwrap()).join("date.rpl");
-    let pkg_name = engine.load_pkg_from_file(rpl_file.to_str().unwrap(), None).unwrap();
-    assert_eq!(pkg_name.as_str(), "date");
-
-    //Test importing a package
-    let pkg_name = engine.import_pkg("net", None, None).unwrap();
-    assert_eq!(pkg_name.as_str(), "net");
-
-    //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
-
-    //Test matching a pattern with some recursive sub-patterns
-    let date_pat_idx = engine.compile_pattern("date.us_long", None).unwrap();
-    let match_result = engine.match_pattern(date_pat_idx, 1, "Saturday, Nov 5, 1955").unwrap();
-    assert_eq!(match_result.pat_name_str(), "us_long");
-    assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
-    assert_eq!(match_result.start(), 1);
-    assert_eq!(match_result.end(), 22);
-    assert_eq!(match_result.sub_pat_count(), 4);
-    let sub_match_pat_names : Vec<&str> = match_result.sub_pat_iter().map(|result| result.pat_name_str()).collect();
-    assert!(sub_match_pat_names.contains(&"day_name"));
-    assert!(sub_match_pat_names.contains(&"month_name"));
-    assert!(sub_match_pat_names.contains(&"day"));
-    assert!(sub_match_pat_names.contains(&"year"));
-
-}
-
 //More LibRosie questions:
 //1. Understand the difference between an expression and a "block", as in the last 6 native functions I haven't tried yet
 //  my hypothesis is that a block is a bunch of patterns in the form "name = expression", and an expression is a single
