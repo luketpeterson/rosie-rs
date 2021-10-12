@@ -8,18 +8,9 @@ use std::rc::{Rc};
 use rosie_sys::{*};
 use crate::{RosieMessage, MatchResult, librosie_init};
 
-/// The Rust object representing a Rosie engine.  Used when direct control over rosie engines is required.
-/// 
-/// **NOTE**: RosieEngines are not internally thread-safe, but you may create more than one RosieEngine in
-/// order to use multiple threads.
-/// 
-// TODO: This is a 3-level indirection because the RawEngine itself is a ptr.  Maybe this can be improved
-// if this turns out to be a bottleneck.);
-#[derive(Clone)]
-pub struct RosieEngine<'a>(Rc<RawEngine<'a>>);
-
 //A wrapper around an EnginePtr so we can implement Drop
-struct RawEngine<'a>(EnginePtr<'a>);
+//NOTE: Only pub within this crate
+pub struct RawEngine<'a>(EnginePtr<'a>);
 
 //Give librosie a chance to clean up the engine
 impl Drop for RawEngine<'_> {
@@ -28,12 +19,20 @@ impl Drop for RawEngine<'_> {
     }
 }
 
+/// The Rust object representing a Rosie engine.  Used when direct access to rosie engines is desired.
+/// 
+/// **NOTE**: RosieEngines are not internally thread-safe, but you may create more than one RosieEngine in
+/// order to use multiple threads.
+/// 
+// TODO: This is a 3-level indirection because the RawEngine itself is a ptr.  Maybe this can be improved
+// if this turns out to be a bottleneck.);
+pub struct RosieEngine<'a>(Rc<RawEngine<'a>>);
+
 impl RosieEngine<'_> {
     // Private convenience to get the EnginePtr for the RosieEngine
     fn ptr(&self) -> EnginePtr<'_> {
         self.0.0
     }
-
     /// Creates a new RosieEngine.
     /// 
     /// If this operation fails then an error message can be obtained by passing a mutable reference to a [RosieMessage].
@@ -459,6 +458,16 @@ impl RosieEngine<'_> {
             out_pkg_name.manual_drop();
             Err(RosieError::from(result_code))
         }
+    }
+}
+
+pub trait PrivateRosieEngine {
+    fn clone_private(&self) -> Self;
+}
+
+impl PrivateRosieEngine for RosieEngine<'_> {
+    fn clone_private(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 

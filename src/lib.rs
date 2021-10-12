@@ -44,6 +44,7 @@ use std::str;
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::rc::{Rc};
 use std::cell::RefCell;
 use std::sync::Mutex;
 
@@ -52,6 +53,10 @@ use once_cell::sync::Lazy; // TODO: As soon as std::sync::SyncLazy is pushed to 
 extern crate rosie_sys;
 use rosie_sys::{*};
 
+//Private Internal code for managing most calls into librosie
+mod librosie_wrapper;
+use librosie_wrapper::{*};
+
 //Public re-exports
 pub use rosie_sys::RosieError;
 pub use rosie_sys::MatchEncoder;
@@ -59,9 +64,10 @@ pub use rosie_sys::TraceFormat;
 pub use rosie_sys::RawMatchResult;
 
 /// Functionality to access [RosieEngine]s directly
-pub mod engine;
-
-use engine::{*};
+pub mod engine {
+    pub use crate::librosie_wrapper::RosieEngine;
+}
+// use engine::{*}; GOAT
 
 //GOAT, Go back to my changes inside librosie, and use an atomic type for my path pointer
 
@@ -176,14 +182,24 @@ fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
 }
 
 /// GOAT, document Pattern
-#[derive(Clone)]
 pub struct Pattern<'a> {
     engine : RosieEngine<'a>,
     id : i32
 }
 
-impl Pattern<'_> {
+impl Clone for Pattern<'_> {
+    fn clone(&self) -> Self {
+        Self {
+            engine : self.engine.clone_private(),
+            id : self.id
+        }
+    }
+}
 
+impl Pattern<'_> {
+    pub fn compile() {
+        //GOAT
+    }
 }
 
 //A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
