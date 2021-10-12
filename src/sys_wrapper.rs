@@ -6,7 +6,7 @@ use std::path::{Path};
 use std::rc::{Rc};
 
 use rosie_sys::{*};
-use crate::{RosieMessage, MatchResult, librosie_init};
+use crate::{RosieMessage, Pattern, MatchResult, librosie_init};
 
 //A wrapper around an EnginePtr so we can implement Drop
 //NOTE: Only pub within this crate
@@ -28,11 +28,7 @@ impl Drop for RawEngine<'_> {
 // if this turns out to be a bottleneck.);
 pub struct RosieEngine<'a>(Rc<RawEngine<'a>>);
 
-impl RosieEngine<'_> {
-    // Private convenience to get the EnginePtr for the RosieEngine
-    fn ptr(&self) -> EnginePtr<'_> {
-        self.0.0
-    }
+impl <'a>RosieEngine<'a> {
     /// Creates a new RosieEngine.
     /// 
     /// If this operation fails then an error message can be obtained by passing a mutable reference to a [RosieMessage].
@@ -174,6 +170,7 @@ impl RosieEngine<'_> {
     /// let two_digit_year_pat = engine.compile_pattern("{[012][0-9]}", None).unwrap();
     /// ```
     /// 
+    //GOAT, compile_pattern is BARF, use compile (below) instead
     pub fn compile_pattern(&mut self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<PatternID, RosieError> {
 
         let mut pat_idx : i32 = 0;
@@ -200,87 +197,33 @@ impl RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-    /// Frees a pattern that was previously compiled with [compile_pattern](RosieEngine::compile_pattern).
-    pub fn free_pattern(&mut self, pattern_id : PatternID) -> Result<(), RosieError> {
-        let result_code = unsafe { rosie_free_rplx(self.ptr(), pattern_id.0) };
+    pub fn compile(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<Pattern<'a>, RosieError> {
 
-        if result_code == 0 {
-            Ok(())
+        let mut pat_idx : i32 = 0;
+        let mut message_buf = RosieString::empty();
+
+        let expression_rosie_string = RosieString::from_str(expression);
+
+        let result_code = unsafe { rosie_compile(self.ptr(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
+
+        if let Some(result_message) = messages {
+            result_message.0.manual_drop(); //We're overwriting the string that was there
+            result_message.0 = message_buf;
         } else {
-            Err(RosieError::from(result_code))
+            message_buf.manual_drop();
         }
-    }
-
-    /// Matches the specified `pattern_id` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
-    /// 
-    /// Returns a [RawMatchResult] or an error code if a problem was encountered.  This is a lower-level API than [match_pattern](RosieEngine::match_pattern),
-    /// and there are two situations where you might want to use it:
-    /// - If you want to the output from a particular [MatchEncoder]
-    /// - If you need the fastest possible match performance, using the [Bool](MatchEncoder::Bool) encoder
-    /// 
-    /// **NOTE**: The returned [RawMatchResult] takes a mutable borrow of the `engine`, and thus the engine cannot be accessed
-    /// while the RawMatchResult is in use.  Copying the data from the RawMatchResult will allow the `engine` to be released.
-    /// 
-    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input, and
-    /// passing 0 (zero) is an error.
-    /// 
-    /// # Example using the JSON encoder with serde_json
-    /// ```
-    /// extern crate serde_json;
-    /// use serde::{*};
-    /// use rosie_rs::*;
-    /// 
-    /// #[derive(Debug, Deserialize)]
-    /// struct JSONMatchResult {
-    ///     #[serde(rename = "type")]
-    ///     pat_name : String, // The pattern that was matched
-    ///     #[serde(rename = "s")]
-    ///     start : usize, // The offset of the start of the match in the input buffer
-    ///     #[serde(rename = "e")]
-    ///     end : usize, // The offset of the end of the match in the input buffer
-    ///     data : String, // The matched text, copied from the input buffer
-    ///     #[serde(default = "Vec::new")]
-    ///     subs : Vec<JSONMatchResult> // The sub-matches within the pattern
-    /// }
-    /// 
-    /// let mut engine = RosieEngine::new(None).unwrap();
-    /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
-    /// let raw_result = engine.match_pattern_raw(date_pat, 1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
-    /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
-    /// ```
-    pub fn match_pattern_raw<'engine>(&'engine mut self, pattern_id : PatternID, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
-
-        if start < 1 || start > input.len() {
-            return Err(RosieError::ArgError);
-        }
-
-        let input_rosie_string = RosieString::from_str(input);
-        let mut match_result = RawMatchResult::empty();
-
-        let result_code = unsafe{ rosie_match(self.ptr(), pattern_id.0, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
-
-        if result_code == 0 {
-            Ok(match_result)
-        } else {
-            Err(RosieError::from(result_code))
-        }
-    }
-
-    /// Matches the specified `pattern_id` in the specified `input` string, beginning from the `start` index.
-    /// 
-    /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
-    /// 
-    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input, and
-    /// passing 0 (zero) is an error.
-    pub fn match_pattern<'input>(&mut self, pattern_id : PatternID, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
         
-        let raw_match_result = self.match_pattern_raw(pattern_id, start, input, &MatchEncoder::Byte)?;
-                
-        if raw_match_result.did_match() {
-            Ok(MatchResult::from_byte_match_result(input, raw_match_result))
+        if result_code == 0 {
+            if pat_idx > 0 {
+                Ok(Pattern{
+                    engine : self.clone_private(),
+                    id : pat_idx    
+                })
+            } else {
+                Err(RosieError::PatternError)
+            }
         } else {
-            Ok(MatchResult::new_no_match())
+            Err(RosieError::from(result_code))
         }
     }
 
@@ -462,12 +405,57 @@ impl RosieEngine<'_> {
 }
 
 pub trait PrivateRosieEngine {
+    fn ptr(&self) -> EnginePtr<'_>;
     fn clone_private(&self) -> Self;
+    fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError>;
+    fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError>;
 }
 
 impl PrivateRosieEngine for RosieEngine<'_> {
+    // Private convenience to get the EnginePtr for the RosieEngine
+    fn ptr(&self) -> EnginePtr<'_> {
+        self.0.0
+    }
+    // Make a clone of the Engine.
+    // RosieEngine is just an Rc pointer, so we can clone it to our heart's content, but externally, we don't want
+    // users treating RosieEngine as Clone because it breaks a conceptual model.  For example, if a user cloned an
+    // engine and changed a config parameter on a clone, it would be confusing when the setting also changed on the
+    // original engine.
     fn clone_private(&self) -> Self {
         Self(self.0.clone())
+    }
+
+    // Returns a MatchResult, which deserializes the data from the RawMatchResult, so there is no pointer into the
+    // engine after the call is complete.  However, the MatchResult contains references into the input string.
+    fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
+        
+        let raw_match_result = self.match_pattern_raw(pattern_id, start, input, &MatchEncoder::Byte)?;
+                
+        if raw_match_result.did_match() {
+            Ok(MatchResult::from_byte_match_result(input, raw_match_result))
+        } else {
+            Ok(MatchResult::new_no_match())
+        }
+    }
+
+    // Returns a RawMatchResult, which contains a pointer into the engine that is accociated with the specific pattern_id
+    fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
+
+        if start < 1 || start > input.len() {
+            return Err(RosieError::ArgError);
+        }
+
+        let input_rosie_string = RosieString::from_str(input);
+        let mut match_result = RawMatchResult::empty();
+
+        //GOAT, need to call new Rosie API, so we get our own dedicated pointers per-pattern
+        let result_code = unsafe{ rosie_match(self.ptr(), pattern_id, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
+
+        if result_code == 0 {
+            Ok(match_result)
+        } else {
+            Err(RosieError::from(result_code))
+        }
     }
 }
 
@@ -475,4 +463,4 @@ impl PrivateRosieEngine for RosieEngine<'_> {
 /// 
 /// PatternIDs are created by [compile_pattern](RosieEngine::compile_pattern), and the patterns they represent can be freed with [free_pattern](RosieEngine::free_pattern).
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub struct PatternID(i32);
+pub struct PatternID(pub i32);
