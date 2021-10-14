@@ -194,23 +194,54 @@ impl Drop for Pattern<'_> {
 }
 
 impl Pattern<'_> {
-    /// GOAT Document
+    /// Compiles the specified expression, returning a `Pattern` that can then be used to match that expression.
+    /// 
+    /// The expression may be either the name of a previously loaded `rpl` pattern, or it may be a raw `rpl` expression.
+    /// 
+    /// **NOTE**: This function is high-level.  If you want more control, performance, or feedback, see [RosieEngine::compile].
+    /// 
+    /// - This function automatically evaluates the expression for dependencies and automatically loads any dependencies it
+    /// finds, while RosieEngine::compile skips the dependency analysis
+    /// - This function's returned `Pattern` will be hosted by the thread's default engine.  RosieEngine::compile allows you
+    /// to host the Pattern on another engine
+    /// - This function doesn't provide any compile warnings or errors.  To debug a compilation failure, call
+    /// RosieEngine::compile
+    /// 
+    /// # Examples
+    /// ```
+    /// # use rosie_rs::*;
+    /// # let mut engine = RosieEngine::new(None).unwrap();
+    /// engine.import_pkg("date", None, None);
+    /// let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
+    /// ```
+    /// 
+    /// ```
+    /// # use rosie_rs::*;
+    /// let two_digit_year_pat = Pattern::compile("{[012][0-9]}").unwrap();
+    /// ```
+    /// 
     pub fn compile(expression : &str) -> Result<Self, RosieError> {
         THREAD_ROSIE_ENGINE.with(|engine| {
             engine.compile(expression, None)
         })
     }
 
-    //GOAT, we want another version of compile that can give back warnings
+//GOAT, Create a macro.  rosie_match!().  pattern string, input string, output is a String
+//Used a per-thread pattern-cache, that is a HashMap of i32s
 
-    /// Matches the `Pattern` in the specified `input` string, beginning from the `start` index.
+    //GOAT.  This call is superfluous.
+    // /// Compiles the specified expression.  Identical to [compile](Pattern::compile), but will provide errors or warnings if any occur.
+    // pub fn compile_with_messages(expression : &str, messages : &mut RosieMessage) -> Result<Self, RosieError> {
+    //     THREAD_ROSIE_ENGINE.with(|engine| {
+    //         engine.compile(expression, Some(messages))
+    //     })
+    // }
+    
+    /// Matches the `Pattern` in the specified `input` string.
     /// 
     /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
-    /// 
-    /// **NOTE**: The values for `start` are 1-based.  Meaning passing 1 will begin the match from the beginning of the input, and
-    /// passing 0 (zero) is an error.
-    pub fn match_str<'input>(&self, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
-        self.engine.match_pattern(self.id, start, input)
+    pub fn match_str<'input>(&self, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
+        self.engine.match_pattern(self.id, 1, input)
     }
 
     /// Matches the `Pattern` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
@@ -256,6 +287,31 @@ impl Pattern<'_> {
     pub fn match_raw<'pat>(&'pat mut self, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'pat>, RosieError> {
         self.engine.match_pattern_raw(self.id, start, input, encoder)
     }
+
+    /// Traces a pattern match, providing information useful for debugging the pattern expression.
+    /// 
+    /// Returns a bool indicating whether the specified pattern matched the input.  The caller must allocate an empty [RosieMessage]
+    /// in order to receive the resulting trace information.
+    /// 
+    /// The caller must also pass a [TraceFormat], to specify the format for the resulting information.
+    /// [Condensed](TraceFormat::Condensed) is the most human-readable format, but a other formats may contain more complete
+    /// information or be easier to automatically parse.
+    /// 
+    /// # Example
+    /// ```
+    /// # use rosie_rs::*;
+    /// # let mut engine = RosieEngine::new(None).unwrap();
+    /// engine.import_pkg("date", None, None);
+    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
+    /// 
+    /// let mut trace = RosieMessage::empty();
+    /// let did_match = engine.trace_pattern(date_pat, 1, "Sat. Nov. 5, 1955", TraceFormat::Condensed, &mut trace).unwrap();
+    /// println!("{}", trace.as_str());
+    /// ```
+    ///
+    pub fn trace(&mut self, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
+        self.engine.trace_pattern(self.id, start, input, format, trace)
+    }
 }
 
 //A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
@@ -277,7 +333,7 @@ impl MaybeOwnedString<'_> {
 
 /// Represents the results of a match operation, performed by [match_pattern](RosieEngine::match_pattern)
 /// 
-/// **TODO** Need better documentation here, but I feel like this belongs in the higher-level crate, and
+/// GOAT**TODO** Need better documentation here, but I feel like this belongs in the higher-level crate, and
 /// I believe a more caller-friendly interface is possible.
 /// 
 #[derive(Debug)]
@@ -426,6 +482,7 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
+    /// Tests the RosieString and RosieMessage functionality, without a RosieEngine
     fn rosie_string() {
 
         //A basic RosieString, pointing to a static string
@@ -461,25 +518,13 @@ mod tests {
     fn default_engine() {
 
         let pat = Pattern::compile("{ [H][^]* }").unwrap();
-        let result = pat.match_str(1, "Hello, Rosie!").unwrap();
+        let result = pat.match_str("Hello, Rosie!").unwrap();
         assert_eq!(result.matched_str(), "Hello, Rosie!");
     }
 
     #[test]
+    /// Tests the interfaces to explicitly manage RosieEngines
     fn explicit_engine() {
-
-        //GOAT.  Create multi-threaded test(s)
-        //
-        //GOAT.  Make a multi-threaded stress-test that instantiates a large number of threads
-        //
-        //GOAT.  Make direct-engine API
-        //GOAT.  Make "default-engine" API
-        //  Take stock of what config entry points exist.  Possibly I don't need a way to access the default engine directly, which is better.
-        //      If it does make sense to access the default engine:
-        //          Get default Engine (for a given thread)
-        //          Config sync across the different threads
-        //  Compile pattern into a wrapped object.
-        //  Match pattern
 
         //Create the engine and check that it was sucessful
         let mut engine = RosieEngine::new(None).unwrap();
@@ -489,8 +534,8 @@ mod tests {
 
         //Check that we can get the library path, and then set it, if needed
         let lib_path = engine.lib_path().unwrap();
-        //println!("{}", lib_path);
-        let new_lib_path = lib_path.to_string(); //We need a copy of the string, so we can mutate the engine safely
+        println!("lib_path = {}", lib_path);
+        let new_lib_path = lib_path.to_string(); //We copy the string, so we can drop the one that's borrowed from the engine in order to mutate the engine safely
         engine.set_lib_path(new_lib_path.as_str()).unwrap();
 
         //Check the alloc limit, set it to unlimited, check the usage
@@ -506,7 +551,7 @@ mod tests {
         
         //Try to compile an invalid pattern (syntax error), and check the error and error message
         let mut message = RosieMessage::empty();
-        let compile_result = engine.compile_pattern("year = bogus", Some(&mut message));
+        let compile_result = engine.compile("year = bogus", Some(&mut message));
         assert!(compile_result.is_err());
         assert!(message.len() > 0);
         //println!("{}", message.as_str());
@@ -520,23 +565,22 @@ mod tests {
         assert_eq!(raw_match_result.did_match(), true);
         assert!(raw_match_result.time_elapsed_matching() <= raw_match_result.time_elapsed_total()); //A little lame as tests go, but validates they are called at least.
 
-        //Now try the match with the high-level match_pattern call
-//        let match_result = engine.match_pattern(pat_idx, 1, "21").unwrap(); GOAT fix this
-//        assert_eq!(match_result.pat_name_str(), "*");
-//        assert_eq!(match_result.matched_str(), "21");
-//        assert_eq!(match_result.start(), 1);
-//        assert_eq!(match_result.end(), 3);
-//        assert_eq!(match_result.sub_pat_count(), 0);
+        //Now try the match with the high-level match_str call
+        let match_result = pat.match_str("21").unwrap();
+        assert_eq!(match_result.pat_name_str(), "*");
+        assert_eq!(match_result.matched_str(), "21");
+        assert_eq!(match_result.start(), 1);
+        assert_eq!(match_result.end(), 3);
+        assert_eq!(match_result.sub_pat_count(), 0);
 
         //Try it against non-matching input, and make sure we get no match
-//        let match_result = engine.match_pattern(pat_idx, 1, "99").unwrap(); GOAT fix this
-//        assert_eq!(match_result.did_match(), false);
-
-let pat_idx = PatternID(1);//GOAT this is trash
+        let match_result = pat.match_str("99").unwrap();
+        assert_eq!(match_result.did_match(), false);
 
         //Test the trace function, and make sure we get a reasonable result
         let mut trace = RosieMessage::empty();
-        assert!(engine.trace_pattern(pat_idx, 1, "21", TraceFormat::Condensed, &mut trace).is_ok());
+        assert!(pat.trace(1, "21", TraceFormat::Condensed, &mut trace).is_ok());
+        assert!(trace.as_str().len() > 0);
         //println!("{}", trace.as_str());
 
         //Test loading a package from a string
@@ -555,18 +599,20 @@ let pat_idx = PatternID(1);//GOAT this is trash
         //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
 
         //Test matching a pattern with some recursive sub-patterns
-        let date_pat_idx = engine.compile_pattern("date.us_long", None).unwrap();
-//        let match_result = engine.match_pattern(date_pat_idx, 1, "Saturday, Nov 5, 1955").unwrap(); GOAT fix this
-//        assert_eq!(match_result.pat_name_str(), "us_long");
-//        assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
-//        assert_eq!(match_result.start(), 1);
-//        assert_eq!(match_result.end(), 22);
-//        assert_eq!(match_result.sub_pat_count(), 4);
-//        let sub_match_pat_names : Vec<&str> = match_result.sub_pat_iter().map(|result| result.pat_name_str()).collect();
-//        assert!(sub_match_pat_names.contains(&"day_name"));
-//        assert!(sub_match_pat_names.contains(&"month_name"));
-//        assert!(sub_match_pat_names.contains(&"day"));
-//        assert!(sub_match_pat_names.contains(&"year"));
+        let date_pat = engine.compile("date.us_long", None).unwrap();
+        let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+        assert_eq!(match_result.pat_name_str(), "us_long");
+        assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
+        assert_eq!(match_result.start(), 1);
+        assert_eq!(match_result.end(), 22);
+        assert_eq!(match_result.sub_pat_count(), 4);
+        let sub_match_pat_names : Vec<&str> = match_result.sub_pat_iter().map(|result| result.pat_name_str()).collect();
+        assert!(sub_match_pat_names.contains(&"day_name"));
+        assert!(sub_match_pat_names.contains(&"month_name"));
+        assert!(sub_match_pat_names.contains(&"day"));
+        assert!(sub_match_pat_names.contains(&"year"));
+
+//GOATGOAT, Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
 
     }
 

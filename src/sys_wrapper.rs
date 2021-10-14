@@ -152,51 +152,9 @@ impl <'a>RosieEngine<'a> {
             Err(RosieError::from(result_code))
         }
     }
-    /// Compiles the specified expression, returning a [PatternID] that can then be used to match that expression.
+    /// Compiles the specified expression into a `Pattern` hosted by the `Engine`.
     /// 
-    /// The expression may be either the name of a previously loaded `rpl` pattern, or it may be a raw `rpl` expression.
-    /// 
-    /// # Examples
-    /// ```
-    /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
-    /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
-    /// ```
-    /// 
-    /// ```
-    /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
-    /// let two_digit_year_pat = engine.compile_pattern("{[012][0-9]}", None).unwrap();
-    /// ```
-    /// 
-    //GOAT, compile_pattern is BARF, use compile (below) instead
-    pub fn compile_pattern(&mut self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<PatternID, RosieError> {
-
-        let mut pat_idx : i32 = 0;
-        let mut message_buf = RosieString::empty();
-
-        let expression_rosie_string = RosieString::from_str(expression);
-
-        let result_code = unsafe { rosie_compile(self.ptr(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
-
-        if let Some(result_message) = messages {
-            result_message.0.manual_drop(); //We're overwriting the string that was there
-            result_message.0 = message_buf;
-        } else {
-            message_buf.manual_drop();
-        }
-        
-        if result_code == 0 {
-            if pat_idx > 0 {
-                Ok(PatternID(pat_idx))
-            } else {
-                Err(RosieError::PatternError)
-            }
-        } else {
-            Err(RosieError::from(result_code))
-        }
-    }
+    /// See [Pattern::compile] for usage examples.
     pub fn compile(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<Pattern<'a>, RosieError> {
 
         let mut pat_idx : i32 = 0;
@@ -221,52 +179,6 @@ impl <'a>RosieEngine<'a> {
                 })
             } else {
                 Err(RosieError::PatternError)
-            }
-        } else {
-            Err(RosieError::from(result_code))
-        }
-    }
-
-    /// Traces a pattern match, providing information useful for debugging the pattern expression.
-    /// 
-    /// Returns a bool indicating whether the specified pattern matched the input.  The caller must allocate an empty [RosieMessage]
-    /// in order to receive the resulting trace information.
-    /// 
-    /// The caller must also pass a [TraceFormat], to specify the format for the resulting information.
-    /// [Condensed](TraceFormat::Condensed) is the most human-readable format, but a other formats may contain more complete
-    /// information or be easier to automatically parse.
-    /// 
-    /// # Example
-    /// ```
-    /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
-    /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
-    /// 
-    /// let mut trace = RosieMessage::empty();
-    /// let did_match = engine.trace_pattern(date_pat, 1, "Sat. Nov. 5, 1955", TraceFormat::Condensed, &mut trace).unwrap();
-    /// println!("{}", trace.as_str());
-    /// ```
-    /// 
-    pub fn trace_pattern(&mut self, pattern_id : PatternID, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
-
-        if start < 1 || start > input.len() {
-            return Err(RosieError::ArgError);
-        }
-        
-        let input_rosie_string = RosieString::from_str(input);
-        let mut matched : i32 = -1;
-
-        trace.0.manual_drop(); //We'll be overwriting whatever string was already there
-
-        //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
-        let result_code = unsafe { rosie_trace(self.ptr(), pattern_id.0, i32::try_from(start).unwrap(), format.as_bytes().as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
-
-        if result_code == 0 {
-            if matched == 1 {
-                Ok(true)
-            } else {
-                Ok(false)
             }
         } else {
             Err(RosieError::from(result_code))
@@ -409,6 +321,7 @@ pub trait PrivateRosieEngine {
     fn clone_private(&self) -> Self;
     fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError>;
     fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError>;
+    fn trace_pattern(&self, pattern_id : i32, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError>;
 }
 
 impl PrivateRosieEngine for RosieEngine<'_> {
@@ -457,10 +370,31 @@ impl PrivateRosieEngine for RosieEngine<'_> {
             Err(RosieError::from(result_code))
         }
     }
-}
 
-/// An index that identifies a compiled pattern within a [RosieEngine].
-/// 
-/// PatternIDs are created by [compile_pattern](RosieEngine::compile_pattern), and the patterns they represent can be freed with [free_pattern](RosieEngine::free_pattern).
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub struct PatternID(pub i32);
+    // Executes the rosie_trace function.  All results are self-contained.
+    fn trace_pattern(&self, pattern_id : i32, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
+
+        if start < 1 || start > input.len() {
+            return Err(RosieError::ArgError);
+        }
+        
+        let input_rosie_string = RosieString::from_str(input);
+        let mut matched : i32 = -1;
+
+        trace.0.manual_drop(); //We'll be overwriting whatever string was already there
+
+        //NOTE: valid trace_style arguments are: "json\0", "full\0", and "condensed\0"
+        let result_code = unsafe { rosie_trace(self.ptr(), pattern_id, i32::try_from(start).unwrap(), format.as_bytes().as_ptr(), &input_rosie_string, &mut matched, &mut trace.0) };
+
+        if result_code == 0 {
+            if matched == 1 {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
+
+}
