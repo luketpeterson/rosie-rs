@@ -29,13 +29,17 @@
 //! `rosie-rs = "0.1.0"`
 //! 
 //! ## Example Usage
+//! ### With the `rosie_match!` macro  GOAT, Add this 
+//! 
+//! 
+//! ### With a compiled Pattern
 //! ```
 //! use rosie_rs::*;
-//! let mut engine = RosieEngine::new(None).unwrap();
-//! engine.import_pkg("date", None, None);
 //! 
-//! let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
-//! let match_result = engine.match_pattern(date_pat, 1, "Saturday, Nov 5, 1955").unwrap();
+//! let date_pat = Pattern::compile("date.us_long").unwrap();
+//! let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+//! println!("did_match = {}", match_result.did_match());
+//! println!("matched_str = {}", match_result.matched_str());
 //! ```
 //! 
 
@@ -62,6 +66,19 @@ pub use rosie_sys::TraceFormat;
 pub use rosie_sys::RawMatchResult;
 
 /// Functionality to access [RosieEngine]s directly
+/// 
+/// GOAT, explain this better, like when you might want to use it.
+/// 
+/// ## Example Usage
+/// ```
+/// use rosie_rs::*;
+/// let mut engine = engine::RosieEngine::new(None).unwrap();
+/// engine.import_pkg("date", None, None);
+/// 
+/// let date_pat = engine.compile("date.us_long", None).unwrap();
+/// let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+/// ```
+/// 
 pub mod engine {
     pub use crate::sys_wrapper::RosieEngine;
 }
@@ -86,12 +103,12 @@ thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine<'static> = RosieEngine::n
 /// The contents of the buffer depend on the situation under which it is returned.
 /// Sometimes the returned text is formatted as JSON and other times it is a human-readable message.
 /// 
-/// # Example
+/// # Example: Getting Messages from the Expression Compiler
 /// ```
 /// # use rosie_rs::*;
-/// # let mut engine = RosieEngine::new(None).unwrap();
+/// let mut engine = engine::RosieEngine::new(None).unwrap();
 /// let mut message = RosieMessage::empty();
-/// engine.compile_pattern("invalid pattern", Some(&mut message));
+/// engine.compile("invalid pattern", Some(&mut message));
 /// println!("{}", message.as_str());
 /// ```
 #[derive(Debug)]
@@ -210,9 +227,7 @@ impl Pattern<'_> {
     /// # Examples
     /// ```
     /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
-    /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.us_long", None).unwrap();
+    /// let date_pat = Pattern::compile("date.us_long").unwrap();
     /// ```
     /// 
     /// ```
@@ -221,7 +236,8 @@ impl Pattern<'_> {
     /// ```
     /// 
     pub fn compile(expression : &str) -> Result<Self, RosieError> {
-        THREAD_ROSIE_ENGINE.with(|engine| {
+        THREAD_ROSIE_ENGINE.with(|engine| {        
+            engine.load_expression_deps(expression, None)?;
             engine.compile(expression, None)
         })
     }
@@ -277,10 +293,8 @@ impl Pattern<'_> {
     ///     subs : Vec<JSONMatchResult> // The sub-matches within the pattern
     /// }
     /// 
-    /// let mut engine = RosieEngine::new(None).unwrap();
-    /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
-    /// let raw_result = engine.match_pattern_raw(date_pat, 1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
+    /// let mut date_pat = Pattern::compile("date.any").unwrap();
+    /// let raw_result = date_pat.match_raw(1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
     /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
     /// ```
     /// 
@@ -300,16 +314,14 @@ impl Pattern<'_> {
     /// # Example
     /// ```
     /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
-    /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
+    /// let date_pat = Pattern::compile("date.any").unwrap();
     /// 
     /// let mut trace = RosieMessage::empty();
-    /// let did_match = engine.trace_pattern(date_pat, 1, "Sat. Nov. 5, 1955", TraceFormat::Condensed, &mut trace).unwrap();
+    /// let did_match = date_pat.trace(1, "Sat. Nov. 5, 1955", TraceFormat::Condensed, &mut trace).unwrap();
     /// println!("{}", trace.as_str());
     /// ```
     ///
-    pub fn trace(&mut self, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
+    pub fn trace(&self, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
         self.engine.trace_pattern(self.id, start, input, format, trace)
     }
 }

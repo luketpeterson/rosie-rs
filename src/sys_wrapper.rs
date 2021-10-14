@@ -154,12 +154,21 @@ impl <'a>RosieEngine<'a> {
     }
     /// Compiles the specified expression into a `Pattern` hosted by the `Engine`.
     /// 
-    /// See [Pattern::compile] for usage examples.
+    /// This is a lower-level interface than [Pattern::compile].  Expression dependencies must be manually imported using
+    /// any of [load_expression_deps], [load_pkg_from_str], [load_pkg_from_file], or [import_pkg].
+    /// 
+    /// # Examples
+    /// ```
+    /// # use rosie_rs::*;
+    /// let mut engine = engine::RosieEngine::new(None).unwrap();
+    /// engine.import_pkg("date", None, None);
+    /// let date_pat = engine.compile("date.us_long", None).unwrap();
+    /// ```
+    /// 
     pub fn compile(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<Pattern<'a>, RosieError> {
 
         let mut pat_idx : i32 = 0;
         let mut message_buf = RosieString::empty();
-
         let expression_rosie_string = RosieString::from_str(expression);
 
         let result_code = unsafe { rosie_compile(self.ptr(), &expression_rosie_string, &mut pat_idx, &mut message_buf) };
@@ -184,6 +193,59 @@ impl <'a>RosieEngine<'a> {
             Err(RosieError::from(result_code))
         }
     }
+
+    /// Parses an rpl expression and loads any dependencies 
+    //TODO: It actually bugs me greatly that we need serde as a dependency in release mode, and even more so that we have
+    // to go through JSON to get expression dependencies out of rosie.  Maybe this can be improved in the future, but 
+    // realistically it's not a serious problem.
+    pub fn load_expression_deps(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<(), RosieError> {
+
+        let mut deps_buf = RosieString::empty();
+        let mut message_buf = RosieString::empty();
+        let expression_rosie_string = RosieString::from_str(expression);
+
+        //Parse the expression to extract any dependencies
+        let result_code = unsafe { rosie_expression_deps(self.ptr(), &expression_rosie_string, &mut deps_buf, &mut message_buf) };
+
+        let mut result_messages = messages;
+        if let Some(result_messages) = &mut result_messages {
+            result_messages.0.manual_drop(); //We're overwriting the string that was there
+            result_messages.0 = message_buf;
+        } else {
+            message_buf.manual_drop();
+        }
+
+        //If we got the deps as a JSON string from librosie, get ready to parse it
+        if result_code == 0 {
+
+            //If there are no deps, we get back an empty string rather than an array
+            if deps_buf.len() > 2 {
+                let parsed_deps : Vec<&str> = serde_json::from_slice(deps_buf.as_bytes()).unwrap();
+    
+                //Loop over each dep and load it
+                for dep in parsed_deps {
+
+                    let mut temp_messages = RosieMessage::empty();
+                    let result = self.import_pkg(dep, None, Some(&mut temp_messages));
+
+                    if let Err(err) = result {
+                        deps_buf.manual_drop();
+
+                        if let Some(result_messages) = result_messages {
+                            *result_messages = temp_messages;
+                        }
+
+                        return Err(err);
+                    }
+                }    
+            }
+
+            deps_buf.manual_drop();
+            Ok(())
+        } else {
+            Err(RosieError::from(result_code))
+        }
+    }
     
     /// Loads a package of `rpl` patterns from the spcified text.
     /// 
@@ -191,7 +253,7 @@ impl <'a>RosieEngine<'a> {
     /// 
     /// **NOTE**: The specified text must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
-    pub fn load_pkg_from_str(&mut self, rpl_text : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
+    pub fn load_pkg_from_str(&self, rpl_text : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
         
         let rpl_text_rosie_string = RosieString::from_str(rpl_text);
         let mut pkg_name = RosieString::empty();
@@ -225,7 +287,7 @@ impl <'a>RosieEngine<'a> {
     /// **NOTE**: The file must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
     //GOAT, filename should be a AsRef<Path>
-    pub fn load_pkg_from_file(&mut self, file_name : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
+    pub fn load_pkg_from_file(&self, file_name : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
         let file_name_rosie_string = RosieString::from_str(file_name);
         let mut pkg_name = RosieString::empty();
@@ -270,19 +332,19 @@ impl <'a>RosieEngine<'a> {
     /// Without an alias:
     /// ```
     /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
+    /// let mut engine = engine::RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
-    /// let date_pat = engine.compile_pattern("date.any", None).unwrap();
+    /// let date_pat = engine.compile("date.any", None).unwrap();
     /// ```
     /// With an alias:
     /// ```
     /// # use rosie_rs::*;
-    /// # let mut engine = RosieEngine::new(None).unwrap();
+    /// let mut engine = engine::RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", Some("special_date"), None);
-    /// let date_pat = engine.compile_pattern("special_date.any", None).unwrap();
+    /// let date_pat = engine.compile("special_date.any", None).unwrap();
     /// ```
     /// 
-    pub fn import_pkg(&mut self, pkg_name : &str, alias : Option<&str>, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
+    pub fn import_pkg(&self, pkg_name : &str, alias : Option<&str>, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
         let in_pkg_name = RosieString::from_str(pkg_name);
         let in_alias = match alias {
