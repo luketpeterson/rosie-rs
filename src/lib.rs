@@ -124,13 +124,6 @@ pub mod engine {
 static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 //Global per-thread singleton engines
-//NOTE: The thread_local! macro forces us to have an initialization check (which we probably want anyway) but also
-// a RefCell (which we could probably get by without).  I don't think this matters in light of the Rosie usage
-// patterns, but if I'm wrong and we need this access to be faster, we can shave a few nanoseconds by implementing
-// thread_local access ourselves.  Unfortunately the direct accessor for the LLVM `thread_local` attribute isn't
-// stabilized yet.  https://github.com/rust-lang/rust/issues/29594  This blog has a work-around, but it would be
-// fragile because of the need to inline across langauges.  It's a good read anyway.
-// https://matklad.github.io/2020/10/03/fast-thread-locals-in-rust.html
 thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine<'static> = {
     let mut messages = RosieMessage::empty();
     if let Ok(engine) = RosieEngine::new(Some(&mut messages)) {
@@ -138,7 +131,7 @@ thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine<'static> = {
     } else {
         panic!("ERROR Creating RosieEngine: {}", messages.as_str())
     }
-};} //GOAT, Test this to see if I create an engine
+};}
 
 /// A buffer to obtain text from Rosie.
 /// 
