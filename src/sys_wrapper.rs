@@ -5,7 +5,31 @@ use std::convert::{TryFrom};
 use std::path::{Path};
 use std::rc::{Rc};
 
-use rosie_sys::{*};
+use rosie_sys::{
+    RosieString,
+    MatchEncoder, LibRosieMatchEncoder,
+    RawMatchResult, LibRosieMatchResult,
+    TraceFormat, LibRosieTraceFormat,
+    EnginePtr,
+    //rosie_home_default,
+    //rosie_new_string,
+    //rosie_home_init,
+    rosie_new,
+    rosie_finalize,
+    rosie_libpath,
+    rosie_alloc_limit,
+    rosie_config,
+    rosie_compile,
+    //rosie_free_rplx,
+    rosie_match,
+    rosie_trace,
+    rosie_load,
+    rosie_loadfile,
+    rosie_import,
+    //rosie_expression_refs,
+    rosie_expression_deps,
+};
+use crate::sys_shadow::{*};
 use crate::{RosieMessage, Pattern, MatchResult, librosie_init};
 
 //A wrapper around an EnginePtr so we can implement Drop
@@ -155,7 +179,8 @@ impl <'a>RosieEngine<'a> {
     /// Compiles the specified expression into a `Pattern` hosted by the `Engine`.
     /// 
     /// This is a lower-level interface than [Pattern::compile].  Expression dependencies must be manually imported using
-    /// any of [load_expression_deps], [load_pkg_from_str], [load_pkg_from_file], or [import_pkg].
+    /// any of [load_expression_deps](RosieEngine::load_expression_deps), [RosieEngine::load_pkg_from_str],
+    /// [RosieEngine::load_pkg_from_file], or [RosieEngine::import_pkg].
     /// 
     /// # Examples
     /// ```

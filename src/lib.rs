@@ -43,6 +43,8 @@
 //! ```
 //! 
 
+//GOAT, I think next I should create a "Rosie" object, and make "compile" be a member of that, along with set_rosie_home, and the call to execute stuff with the default engine.
+
 use std::slice::Iter;
 use std::str;
 use std::convert::{TryFrom, TryInto};
@@ -53,17 +55,31 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy; // TODO: As soon as std::sync::SyncLazy is pushed to stable, we will migrate there and eliminate this dependency
 
 extern crate rosie_sys;
-use rosie_sys::{*};
+use rosie_sys::{
+    RosieString,
+    rosie_new_string,
+    rosie_home_default,
+    rosie_home_init,
+    rosie_free_rplx,
+};
 
 //Private Internal code for managing most calls into librosie
 mod sys_wrapper;
 use sys_wrapper::{*};
 
 //Public re-exports
-pub use rosie_sys::RosieError;
+mod sys_shadow; //Shadow implementations of things from rosie_sys::
+pub use sys_shadow::RosieError; //pub use rosie_sys::RosieError;
+/// An Encoder Module used to format the results, when using [Pattern::match_raw]
 pub use rosie_sys::MatchEncoder;
-pub use rosie_sys::TraceFormat;
+/// A structure containing the match results from a [Pattern::match_raw] call.
+/// 
+/// **NOTE**: A RawMatchResult points to memory inside the engine that is associated with the pattern, therefore you may
+/// not perform any additional matching with that pattern until the RawMatchResult has been released.  This is enforced with
+/// borrowing semantics [Pattern::match_raw].
 pub use rosie_sys::RawMatchResult;
+/// A format for debugging output, to be used with [Pattern::trace]
+pub use rosie_sys::TraceFormat;
 
 /// Functionality to access [RosieEngine]s directly
 /// 
@@ -82,8 +98,6 @@ pub use rosie_sys::RawMatchResult;
 pub mod engine {
     pub use crate::sys_wrapper::RosieEngine;
 }
-
-//GOAT, Go back to my changes inside librosie, and use an atomic type for my path pointer
 
 //Global to track the state of librosie
 static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
@@ -195,7 +209,10 @@ fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
     }
 }
 
-/// GOAT, document Pattern
+/// A compiled Rosie pattern, created by either [Rosie::compile] or [RosieEngine::compile]
+/// 
+/// GOAT, more to document about Pattern
+/// 
 //INTERNAL NOTE: Pattern doesn't implement Clone because a RawMatchResult holds a pointer to a buffer inside the
 // engine, for which there is one-per-pattern.  If a pattern could be cloned, we could end up invalidating the
 // memory out from under a RawMatchResult.
@@ -262,7 +279,7 @@ impl Pattern<'_> {
 
     /// Matches the `Pattern` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
     /// 
-    /// Returns a [RawMatchResult] or an error code if a problem was encountered.  This is a lower-level API than [match_str],
+    /// Returns a [RawMatchResult] or an error code if a problem was encountered.  This is a lower-level API than [match_str](Pattern::match_str),
     /// and there are two situations where you might want to use it:
     /// - If you want to the output from a particular [MatchEncoder]
     /// - If you need the fastest possible match performance, using the [Bool](MatchEncoder::Bool) encoder
@@ -343,7 +360,7 @@ impl MaybeOwnedString<'_> {
     }
 }
 
-/// Represents the results of a match operation, performed by [match_pattern](RosieEngine::match_pattern)
+/// Represents the results of a match operation, performed by [Pattern::match_str]
 /// 
 /// GOAT**TODO** Need better documentation here, but I feel like this belongs in the higher-level crate, and
 /// I believe a more caller-friendly interface is possible.
