@@ -43,10 +43,12 @@ impl Drop for RawEngine<'_> {
     }
 }
 
+//GOAT, A RosieEngine shouldn't have a lifetime.  A pattern does need a lifetime because it borrows a RosieEngine
+
 /// The Rust object representing a Rosie engine.  Used when direct access to rosie engines is desired.
 /// 
-/// **NOTE**: RosieEngines are not internally thread-safe, but you may create more than one RosieEngine in
-/// order to use multiple threads.
+/// **NOTE**: RosieEngines are not internally thread-safe and don't implemnt [Sync] or [Send].  You may create more than one RosieEngine in
+/// order to use multiple threads.  Also there is a thread-local `default_engine` accessible through [Rosie::with_default_engine].
 /// 
 // TODO: This is a 3-level indirection because the RawEngine itself is a ptr.  Maybe this can be improved
 // if this turns out to be a bottleneck.);

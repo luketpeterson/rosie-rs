@@ -28,11 +28,24 @@
 //! 
 //! `rosie-rs = "0.1.0"`
 //! 
-//! ## Example Usage
-//! ### With the `rosie_match!` macro  GOAT, Add this 
+//! ## Usage
 //! 
+//! There are 3 levels of depth at which you may access Rosie.
 //! 
-//! ### With a compiled Pattern
+//! ### High-Level: With the `rosie_matches!` macro
+//! 
+//! Just one-line!
+//! ```
+//! let matches = rosie_matches!("date.any", "Saturday, Nov 5, 1955");
+//! assert!(matches);
+//! ```
+//! 
+//! Compiled patterns are managed automatically using a least-recently-used cache and they are recompiled as needed.
+//! 
+//! ### Mid-Level: With compiled Patterns
+//! 
+//! Explicit compilation reduces overhead because you can manage compiled patterns yourself, dropping the patterns you don't need
+//! and avoiding unnecessary recompilation.
 //! ```
 //! use rosie_rs::*;
 //! 
@@ -41,6 +54,10 @@
 //! println!("did_match = {}", match_result.did_match());
 //! println!("matched_str = {}", match_result.matched_str());
 //! ```
+//! 
+//! ### Low-Level: With a RosieEngine
+//! 
+//! See [engine] for details.
 //! 
 
 //GOAT, I think next I should create a "Rosie" object, and make "compile" be a member of that, along with set_rosie_home, and the call to execute stuff with the default engine.
@@ -83,7 +100,11 @@ pub use rosie_sys::TraceFormat;
 
 /// Functionality to access [RosieEngine]s directly
 /// 
-/// GOAT, explain this better, like when you might want to use it.
+/// The majority of use cases don't require direct access to a RosieEngine.  However, this module can be used to:
+/// - Create multiple simultaneous engines
+/// - Change the environment (Standard Pattern Library or config)
+/// - Explicitly load rpl packages 
+/// - Constrain memory usage
 /// 
 /// ## Example Usage
 /// ```
@@ -110,7 +131,14 @@ static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false))
 // stabilized yet.  https://github.com/rust-lang/rust/issues/29594  This blog has a work-around, but it would be
 // fragile because of the need to inline across langauges.  It's a good read anyway.
 // https://matklad.github.io/2020/10/03/fast-thread-locals-in-rust.html
-thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine<'static> = RosieEngine::new(None).unwrap() } //GOAT, do unwrap_or, and if it fails, call it again to get a message
+thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine<'static> = {
+    let mut messages = RosieMessage::empty();
+    if let Ok(engine) = RosieEngine::new(Some(&mut messages)) {
+        engine
+    } else {
+        panic!("ERROR Creating RosieEngine: {}", messages.as_str())
+    }
+};} //GOAT, Test this to see if I create an engine
 
 /// A buffer to obtain text from Rosie.
 /// 
@@ -261,14 +289,6 @@ impl Pattern<'_> {
 
 //GOAT, Create a macro.  rosie_match!().  pattern string, input string, output is a String
 //Used a per-thread pattern-cache, that is a HashMap of i32s
-
-    //GOAT.  This call is superfluous.
-    // /// Compiles the specified expression.  Identical to [compile](Pattern::compile), but will provide errors or warnings if any occur.
-    // pub fn compile_with_messages(expression : &str, messages : &mut RosieMessage) -> Result<Self, RosieError> {
-    //     THREAD_ROSIE_ENGINE.with(|engine| {
-    //         engine.compile(expression, Some(messages))
-    //     })
-    // }
     
     /// Matches the `Pattern` in the specified `input` string.
     /// 
