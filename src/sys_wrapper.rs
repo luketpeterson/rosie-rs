@@ -83,15 +83,14 @@ impl <'a>RosieEngine<'a> {
         }
     }
     /// Returns the file-system path to the directory containing the standard pattern library used by the RosieEngine.
-    //GOAT, should return a Path.
-    pub fn lib_path(&self) -> Result<&str, RosieError> {
+    pub fn lib_path(&self) -> Result<&Path, RosieError> {
 
         let mut path_rosie_string = RosieString::empty();
         
         let result_code = unsafe { rosie_libpath(self.ptr(), &mut path_rosie_string) };
 
         if result_code == 0 {
-            Ok(path_rosie_string.into_str())
+            Ok(Path::new(path_rosie_string.into_str()))
         } else {
             Err(RosieError::from(result_code))
         }
@@ -99,10 +98,9 @@ impl <'a>RosieEngine<'a> {
     /// Sets the directory to use when loading packages from the standard pattern library.
     /// 
     /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as any other operations that load rpl code using the `import` directive.
-    //GOAT, filename should be a AsRef<Path>
-    pub fn set_lib_path(&mut self, new_path : &str) -> Result<(), RosieError> {
+    pub fn set_lib_path<P: AsRef<Path>>(&mut self, new_path : P) -> Result<(), RosieError> {
 
-        let mut path_rosie_string = RosieString::from_str(new_path);
+        let mut path_rosie_string = RosieString::from_str(new_path.as_ref().to_str().unwrap());
 
         //Q-03.09.A QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
         
@@ -315,10 +313,9 @@ impl <'a>RosieEngine<'a> {
     /// 
     /// **NOTE**: The file must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
-    //GOAT, filename should be a AsRef<Path>
-    pub fn load_pkg_from_file(&self, file_name : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
+    pub fn load_pkg_from_file<P: AsRef<Path>>(&self, file_name : P, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
-        let file_name_rosie_string = RosieString::from_str(file_name);
+        let file_name_rosie_string = RosieString::from_str(file_name.as_ref().to_str().unwrap());
         let mut pkg_name = RosieString::empty();
         let mut message_buf = RosieString::empty();
         let mut ok : i32 = 0;

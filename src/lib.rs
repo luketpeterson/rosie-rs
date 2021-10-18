@@ -578,9 +578,9 @@ mod tests {
 
         //Check that we can get the library path, and then set it, if needed
         let lib_path = engine.lib_path().unwrap();
-        println!("lib_path = {}", lib_path);
-        let new_lib_path = lib_path.to_string(); //We copy the string, so we can drop the one that's borrowed from the engine in order to mutate the engine safely
-        engine.set_lib_path(new_lib_path.as_str()).unwrap();
+        println!("lib_path = {}", lib_path.display());
+        let new_lib_path = lib_path.to_path_buf(); //We copy the Path, so we can drop the one that's borrowed from the engine in order to mutate the engine safely
+        engine.set_lib_path(new_lib_path).unwrap();
 
         //Check the alloc limit, set it to unlimited, check the usage
         let _ = engine.mem_alloc_limit().unwrap();
