@@ -90,6 +90,8 @@ impl <'a>RosieEngine<'a> {
         let result_code = unsafe { rosie_libpath(self.ptr(), &mut path_rosie_string) };
 
         if result_code == 0 {
+            //WARNING: Different OSs use different encodings for file paths.  Also there is no guarantee that file system paths
+            // will be valid unicode (as Rust's str & String require).  There is a chance this will fail on some OSs.
             Ok(Path::new(path_rosie_string.into_str()))
         } else {
             Err(RosieError::from(result_code))
@@ -100,6 +102,8 @@ impl <'a>RosieEngine<'a> {
     /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as any other operations that load rpl code using the `import` directive.
     pub fn set_lib_path<P: AsRef<Path>>(&mut self, new_path : P) -> Result<(), RosieError> {
 
+        //WARNING: Different OSs use different encodings for file paths.  Also there is no guarantee that file system paths
+        // will be valid unicode (as Rust's str & String require).  There is a chance this will fail on some OSs.
         let mut path_rosie_string = RosieString::from_str(new_path.as_ref().to_str().unwrap());
 
         //Q-03.09.A QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
@@ -315,6 +319,8 @@ impl <'a>RosieEngine<'a> {
     /// 
     pub fn load_pkg_from_file<P: AsRef<Path>>(&self, file_name : P, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
+        //WARNING: Different OSs use different encodings for file paths.  Also there is no guarantee that file system paths
+        // will be valid unicode (as Rust's str & String require).  There is a chance this will fail on some OSs.
         let file_name_rosie_string = RosieString::from_str(file_name.as_ref().to_str().unwrap());
         let mut pkg_name = RosieString::empty();
         let mut message_buf = RosieString::empty();
