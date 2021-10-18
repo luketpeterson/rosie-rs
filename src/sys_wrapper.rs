@@ -44,8 +44,6 @@ impl Drop for RawEngine {
     }
 }
 
-//GOAT, Audit whether each call should take a mutable engine or not.  Document why the calls that don't take a mutable engine are ok
-
 /// The Rust object representing a Rosie engine.  Used when direct access to rosie engines is desired.
 /// 
 /// **NOTE**: RosieEngines are not internally thread-safe and don't implemnt [Sync] or [Send].  You may create more than one RosieEngine in
@@ -139,7 +137,7 @@ impl RosieEngine {
     /// would be permitted to consume 13000 bytes in total.
     /// 
     /// **NOTE**: This function will panic if the `new_limit` argument is higher than 2GB.
-    pub fn set_mem_alloc_limit(&self, new_limit : usize) -> Result<(), RosieError> {
+    pub fn set_mem_alloc_limit(&mut self, new_limit : usize) -> Result<(), RosieError> {
         let mut new_limit_mut = i32::try_from(new_limit).unwrap();
         let mut usage : i32 = 0;
 
@@ -195,6 +193,10 @@ impl RosieEngine {
     /// let date_pat = engine.compile("date.us_long", None).unwrap();
     /// ```
     /// 
+    //INTERNAL NOTE: `compile` actually builds the pattern within the engine, so technically this is mutating the engine,
+    //but conceptually this is an internal mutation, so we just take an immutable reference to the engine.
+    //The exposed API doesn't allow any references to the engine internals to be retained, so this "internal mutability"
+    //is safe.
     pub fn compile(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<Pattern, RosieError> {
 
         let mut pat_idx : i32 = 0;
@@ -225,9 +227,13 @@ impl RosieEngine {
     }
 
     /// Parses an rpl expression and loads any dependencies 
+    ///
     //TODO: It actually bugs me greatly that we need serde as a dependency in release mode, and even more so that we have
     // to go through JSON to get expression dependencies out of rosie.  Maybe this can be improved in the future, but 
     // realistically it's not a serious problem.
+    //
+    //INTERNAL NOTE: The call performs internal mutation on the engine, but it's safe because the mutated components can't
+    // be referenced. See note on `RosieEngine::compile()`
     pub fn load_expression_deps(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<(), RosieError> {
 
         let mut deps_buf = RosieString::empty();
@@ -283,6 +289,8 @@ impl RosieEngine {
     /// 
     /// **NOTE**: The specified text must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
+    //INTERNAL NOTE: The call performs internal mutation on the engine, but it's safe because the mutated components can't
+    // be referenced. See note on `RosieEngine::compile()`
     pub fn load_pkg_from_str(&self, rpl_text : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
         
         let rpl_text_rosie_string = RosieString::from_str(rpl_text);
@@ -316,6 +324,8 @@ impl RosieEngine {
     /// 
     /// **NOTE**: The file must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
+    //INTERNAL NOTE: The call performs internal mutation on the engine, but it's safe because the mutated components can't
+    // be referenced. See note on `RosieEngine::compile()`
     pub fn load_pkg_from_file<P: AsRef<Path>>(&self, file_name : P, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
         //WARNING: Different OSs use different encodings for file paths.  Also there is no guarantee that file system paths
@@ -375,6 +385,8 @@ impl RosieEngine {
     /// let date_pat = engine.compile("special_date.any", None).unwrap();
     /// ```
     /// 
+    //INTERNAL NOTE: The call performs internal mutation on the engine, but it's safe because the mutated components can't
+    // be referenced. See note on `RosieEngine::compile()`
     pub fn import_pkg(&self, pkg_name : &str, alias : Option<&str>, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
 
         let in_pkg_name = RosieString::from_str(pkg_name);
