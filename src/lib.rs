@@ -125,7 +125,7 @@ pub mod engine {
 static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 //Global per-thread singleton engines
-thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine<'static> = {
+thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine = {
     let mut messages = RosieMessage::empty();
     if let Ok(engine) = RosieEngine::new(Some(&mut messages)) {
         engine
@@ -238,18 +238,18 @@ fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
 //INTERNAL NOTE: Pattern doesn't implement Clone because a RawMatchResult holds a pointer to a buffer inside the
 // engine, for which there is one-per-pattern.  If a pattern could be cloned, we could end up invalidating the
 // memory out from under a RawMatchResult.
-pub struct Pattern<'a> {
-    engine : RosieEngine<'a>,
+pub struct Pattern {
+    engine : RosieEngine,
     id : i32
 }
 
-impl Drop for Pattern<'_> {
+impl Drop for Pattern {
     fn drop(&mut self) {
         unsafe { rosie_free_rplx(self.engine.ptr(), self.id) };
     }
 }
 
-impl Pattern<'_> {
+impl Pattern {
     /// Compiles the specified expression, returning a `Pattern` that can then be used to match that expression.
     /// 
     /// The expression may be either the name of a previously loaded `rpl` pattern, or it may be a raw `rpl` expression.

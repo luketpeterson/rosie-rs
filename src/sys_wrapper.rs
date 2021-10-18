@@ -35,16 +35,15 @@ use crate::{RosieMessage, Pattern, MatchResult, librosie_init};
 
 //A wrapper around an EnginePtr so we can implement Drop
 //NOTE: Only pub within this crate
-pub struct RawEngine<'a>(EnginePtr<'a>);
+pub struct RawEngine(EnginePtr);
 
 //Give librosie a chance to clean up the engine
-impl Drop for RawEngine<'_> {
+impl Drop for RawEngine {
     fn drop(&mut self) {
         unsafe{ rosie_finalize(self.0); }
     }
 }
 
-//GOAT, A RosieEngine shouldn't have a lifetime.  A pattern does need a lifetime because it borrows a RosieEngine
 //GOAT, Audit whether each call should take a mutable engine or not.  Document why the calls that don't take a mutable engine are ok
 
 /// The Rust object representing a Rosie engine.  Used when direct access to rosie engines is desired.
@@ -54,9 +53,9 @@ impl Drop for RawEngine<'_> {
 /// 
 // TODO: This is a 3-level indirection because the RawEngine itself is a ptr.  Maybe this can be improved
 // if this turns out to be a bottleneck.);
-pub struct RosieEngine<'a>(Rc<RawEngine<'a>>);
+pub struct RosieEngine(Rc<RawEngine>);
 
-impl <'a>RosieEngine<'a> {
+impl RosieEngine {
     /// Creates a new RosieEngine.
     /// 
     /// If this operation fails then an error message can be obtained by passing a mutable reference to a [RosieMessage].
@@ -196,7 +195,7 @@ impl <'a>RosieEngine<'a> {
     /// let date_pat = engine.compile("date.us_long", None).unwrap();
     /// ```
     /// 
-    pub fn compile(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<Pattern<'a>, RosieError> {
+    pub fn compile(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<Pattern, RosieError> {
 
         let mut pat_idx : i32 = 0;
         let mut message_buf = RosieString::empty();
@@ -411,16 +410,16 @@ impl <'a>RosieEngine<'a> {
 }
 
 pub trait PrivateRosieEngine {
-    fn ptr(&self) -> EnginePtr<'_>;
+    fn ptr(&self) -> EnginePtr;
     fn clone_private(&self) -> Self;
     fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError>;
     fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError>;
     fn trace_pattern(&self, pattern_id : i32, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError>;
 }
 
-impl PrivateRosieEngine for RosieEngine<'_> {
+impl PrivateRosieEngine for RosieEngine {
     // Private convenience to get the EnginePtr for the RosieEngine
-    fn ptr(&self) -> EnginePtr<'_> {
+    fn ptr(&self) -> EnginePtr {
         self.0.0
     }
     // Make a clone of the Engine.
