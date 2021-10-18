@@ -522,7 +522,8 @@ impl MatchResult<'_> {
 mod tests {
     use crate::{*};
     use std::thread;
-    use std::sync::mpsc;
+    use rand::prelude::*;
+    use rand_pcg::Pcg64;
 
     #[test]
     /// Tests the RosieString and RosieMessage functionality, without a RosieEngine
@@ -666,51 +667,61 @@ mod tests {
     }
 
     #[test]
-    fn multi_threaded_default_engine() {
-
-//         let (tx, rx) = mpsc::channel();
-
-//         let handle = thread::spawn(move || {
-
-//             THREAD_ROSIE_ENGINE.with(move |engine_refcell| {
-
-//                 for _ in 0..1 {
-//                     let pat_idx = engine_refcell.borrow_mut().compile_pattern("{[012][0-9]}", None).unwrap();
-//                     tx.send(pat_idx).unwrap();    
-//                 }
-
-//             });
-//         });
-
-
-//         THREAD_ROSIE_ENGINE.with(move |engine_refcell| {
-
-//             for received in rx {
-// //                println!("Got: {}", received.0); GOAT
-
-//                 let pat_idx = engine_refcell.borrow_mut().compile_pattern("{[012][0-9]}", None).unwrap();
-// //                println!("main: {}", pat_idx.0);
-        
-//             }
-        
-//         });
-
-
-//         handle.join().unwrap();
-        
-        //GOAT
-    }
-
-    #[test]
+    /// Tests a whole bunch of threads all doing compiling and matching at the same time
     fn thread_stress() {
-        //GOAT
+
+        const NUM_THREADS : usize = 100;
+        const NUM_ITERATIONS : usize = 100; //Each iteration includes a compile
+        const NUM_MATCHES : usize = 500; //Number of matches to perform each iteration
+
+        let mut thread_handles = vec![];
+
+        for thread_idx in 0..NUM_THREADS {
+            let handle = thread::spawn(move || {
+
+                let mut rng = Pcg64::seed_from_u64(thread_idx.try_into().unwrap()); //non-cryptographic random used for repeatability
+
+                for _ in 0..NUM_ITERATIONS{
+
+                    let pat_idx : u8 = rng.gen_range(0..2);
+                    let pat_expr = match pat_idx {
+                        0 => "{ [H][^]* }",
+                        1 => "date.any",
+                        2 => "time.any",
+                        _ => panic!()
+                    };
+
+                    let pat = Pattern::compile(pat_expr).unwrap();
+
+                    for _ in 0..NUM_MATCHES {
+
+                        let str_idx : u8 = rng.gen_range(0..2);
+                        let str_val = match str_idx {
+                            0 => "Hello, Rosie!",
+                            1 => "Saturday, Nov 5, 1955",
+                            2 => "2:21 am",
+                            _ => panic!()
+                        };
+    
+                        let result = pat.match_str(str_val).unwrap();
+    
+                        match (pat_idx, str_idx) {
+                            (0, 0) => assert_eq!(result.matched_str(), "Hello, Rosie!"),
+                            (1, 1) => assert_eq!(result.matched_str(), "Saturday, Nov 5, 1955"),
+                            (2, 2) => assert_eq!(result.matched_str(), "2:21 am"),
+                            _ => assert!(!result.did_match()),
+                        }
+                    }
+                }
+            });
+
+            thread_handles.push(handle);
+        }
+
+        //Make sure every thread has a chance to finish
+        for handle in thread_handles {
+            handle.join().unwrap();
+        }
     }
 
 }
-//More LibRosie questions:
-//1. Understand the difference between an expression and a "block", as in the last 6 native functions I haven't tried yet
-//  my hypothesis is that a block is a bunch of patterns in the form "name = expression", and an expression is a single
-//  pattern, or a single pattern name.
-//
-//2. Understand the meaning of "deps", "refs" & "parsetree"s, as they're used in the last 6 functions I'm not calling.
-//
