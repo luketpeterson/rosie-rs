@@ -63,7 +63,6 @@
 
 //GOAT, I think next I should create a "Rosie" object, and make "compile" be a member of that, along with set_rosie_home, and the call to execute stuff with the default engine.
 
-use std::slice::Iter;
 use std::str;
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
@@ -231,10 +230,16 @@ fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
     }
 }
 
-/// A compiled Rosie pattern, created by either [Rosie::compile] or [RosieEngine::compile]
+/// The compiled form of an RPL expression, used for matching
 /// 
-/// GOAT, more to document about Pattern
+/// A Pattern can be created by either [Rosie::compile] or [RosieEngine::compile].
 /// 
+/// **Performance NOTE**: Compiling a pattern is hundreds of times more expensive than a typical matching operation.
+/// Therefore it is usually worthwhile to retain compiled patterns rather than allowing them to be dropped and
+/// recompiling them when needed.
+/// 
+//TODO: Add API to load compiled patterns, without needing to go via RPL, when it is supported by librosie.
+//
 //INTERNAL NOTE: Pattern doesn't implement Clone because a RawMatchResult holds a pointer to a buffer inside the
 // engine, for which there is one-per-pattern.  If a pattern could be cloned, we could end up invalidating the
 // memory out from under a RawMatchResult.
@@ -376,9 +381,7 @@ impl MaybeOwnedString<'_> {
 
 /// Represents the results of a match operation, performed by [Pattern::match_str]
 /// 
-/// GOAT**TODO** Need better documentation here, but I feel like this belongs in the higher-level crate, and
-/// I believe a more caller-friendly interface is possible.
-/// 
+//**TODO** I feel like a more caller-friendly interface is possible; i.e. the ability to specify sub-patterns with a "path"
 #[derive(Debug)]
 pub struct MatchResult<'a> {
     pat_name : String,
@@ -491,6 +494,7 @@ impl MatchResult<'_> {
             subs : vec![]
         }
     }
+    /// Returns `true` if the pattern was matched in the input, otherwise returns `false`.
     pub fn did_match(&self) -> bool {
         if self.start == 0 && self.end == 0 {
             false
@@ -498,22 +502,32 @@ impl MatchResult<'_> {
             true
         }
     }
+    /// Returns the name of the pattern that matched
     pub fn pat_name_str(&self) -> &str {
         self.pat_name.as_str()
     }
+    /// Returns the subset of the input that was matched by the pattern
     pub fn matched_str(&self) -> &str {
         self.data.as_str()
     }
+    /// Returns the character offset of the beginning of the match, within the input
+    /// 
+    /// NOTE: Offsets are 1-based
     pub fn start(&self) -> usize {
         self.start
     }
+    /// Returns the character offset, within the input, of the end of the match
+    /// 
+    /// NOTE: Offsets are 1-based
     pub fn end(&self) -> usize {
         self.end
     }
+    /// Returns the number of matched sub-patterns that comprise the matched pattern
     pub fn sub_pat_count(&self) -> usize {
         self.subs.len()
     }
-    pub fn sub_pat_iter(&self) -> Iter<'_, MatchResult> {
+    /// Returns an [Iterator] over all of the sub-patterns withing this matched pattern
+    pub fn sub_pat_iter(&self) -> impl Iterator<Item=&MatchResult> {
         self.subs.iter()
     }
 }
