@@ -21,7 +21,8 @@ use rosie_sys::{
     rosie_config,
     rosie_compile,
     //rosie_free_rplx,
-    rosie_match,
+    //rosie_match,
+    rosie_match2,
     rosie_trace,
     rosie_load,
     rosie_loadfile,
@@ -44,6 +45,7 @@ impl Drop for RawEngine<'_> {
 }
 
 //GOAT, A RosieEngine shouldn't have a lifetime.  A pattern does need a lifetime because it borrows a RosieEngine
+//GOAT, Audit whether each call should take a mutable engine or not.  Document why the calls that don't take a mutable engine are ok
 
 /// The Rust object representing a Rosie engine.  Used when direct access to rosie engines is desired.
 /// 
@@ -450,8 +452,8 @@ impl PrivateRosieEngine for RosieEngine<'_> {
         let input_rosie_string = RosieString::from_str(input);
         let mut match_result = RawMatchResult::empty();
 
-        //GOAT, need to call new Rosie API, so we get our own dedicated pointers per-pattern
-        let result_code = unsafe{ rosie_match(self.ptr(), pattern_id, i32::try_from(start).unwrap(), encoder.as_bytes().as_ptr(), &input_rosie_string, &mut match_result) }; 
+        //Calling the rosie_match2 API, so we get our own dedicated results buffer for each pattern
+        let result_code = unsafe{ rosie_match2(self.ptr(), pattern_id, encoder.as_bytes().as_ptr(), &input_rosie_string, u32::try_from(start).unwrap(), u32::try_from(input_rosie_string.len()+1).unwrap(), &mut match_result, 0) };
 
         if result_code == 0 {
             Ok(match_result)

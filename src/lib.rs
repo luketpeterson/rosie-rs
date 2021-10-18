@@ -39,6 +39,7 @@
 //! let matches = rosie_matches!("date.any", "Saturday, Nov 5, 1955");
 //! assert!(matches);
 //! ```
+//! GOAT, can I create a macro that returns a bool or a String depending on the way it's called??
 //! 
 //! Compiled patterns are managed automatically using a least-recently-used cache and they are recompiled as needed.
 //! 
@@ -641,7 +642,7 @@ mod tests {
         //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
 
         //Test matching a pattern with some recursive sub-patterns
-        let date_pat = engine.compile("date.us_long", None).unwrap();
+        let mut date_pat = engine.compile("date.us_long", None).unwrap();
         let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
         assert_eq!(match_result.pat_name_str(), "us_long");
         assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
@@ -654,7 +655,13 @@ mod tests {
         assert!(sub_match_pat_names.contains(&"day"));
         assert!(sub_match_pat_names.contains(&"year"));
 
-//GOATGOAT, Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
+        //Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
+        //Test the JSONPretty encoder while we're at it
+        engine.load_expression_deps("time.any", None).unwrap();
+        let mut time_pat = engine.compile("time.any", None).unwrap();
+        let date_raw_match_result = date_pat.match_raw(1, "Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
+        let time_raw_match_result = time_pat.match_raw(1, "2:21 am", &MatchEncoder::JSONPretty).unwrap();
+        assert!(date_raw_match_result.as_str() != time_raw_match_result.as_str());
 
     }
 
