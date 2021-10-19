@@ -59,7 +59,7 @@
 //! use rosie_rs::*;
 //! 
 //! let date_pat = Rosie::compile("date.us_long").unwrap();
-//! let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+//! let match_result : MatchResult = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
 //! println!("did_match = {}", match_result.did_match());
 //! println!("matched_str = {}", match_result.matched_str());
 //! ```
@@ -122,7 +122,7 @@ pub use rosie_sys::TraceFormat;
 /// engine.import_pkg("date", None, None);
 /// 
 /// let date_pat = engine.compile("date.us_long", None).unwrap();
-/// let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+/// let matched_string : String = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
 /// ```
 /// 
 pub mod engine {
@@ -307,30 +307,31 @@ impl Rosie {
 
 /// Implemented for types that can be returned by a match operation
 pub trait MatchOutput<'a> : Sized {
-    fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError>;
+    fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError>;
 }
 
 impl MatchOutput<'_> for bool {
-    fn match_str(pat : &mut Pattern, input : &str) -> Result<Self, RosieError> {
-        let raw_match_result = pat.match_raw(1, input, &MatchEncoder::Bool).unwrap();
+    fn match_str(pat : &Pattern, input : &str) -> Result<Self, RosieError> {
+        //NOTE: we're calling directly into the engine because we want to bypass the requirement for a &mut self in Pattern::match_raw.
+        // That &mut is just there to ensure we have an exclusive borrow, so subsequent calls don't match the same compiled pattern and
+        // collide with the pattern's buffer in the engine.
+        let raw_match_result = pat.engine.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
         Ok(raw_match_result.did_match())
     }
 }
 
 impl <'a>MatchOutput<'a> for String {
-    fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError> {
+    fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError> {
         let match_result = pat.engine.match_pattern(pat.id, 1, input)?;
         Ok(match_result.matched_str().to_string())
     }
 }
 
 impl <'a>MatchOutput<'a> for MatchResult<'a> {
-    fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError> {
+    fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError> {
         pat.engine.match_pattern(pat.id, 1, input)
     }
 }
-
-//GOAT, convert Pattern::match_str to use the generic return types as well
 
 //Private function to make sure librosie is initialized and initialize it if it isn't
 //Internal NOTE: This function is responsible for internal librosie initialization, so it is also called by RosieEngine::new()
@@ -406,8 +407,10 @@ impl Pattern {
     /// NOTE: This function may return several different return types, including [bool], [String], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
     /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
-    pub fn match_str<'input>(&self, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
-        self.engine.match_pattern(self.id, 1, input)
+    pub fn match_str<'input, T>(&self, input : &'input str) -> Result<T, RosieError> 
+    where T : MatchOutput<'input> {
+        //Call the return-type-specific match call
+        T::match_str(self, input)
     }
 
     /// Matches the `Pattern` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
@@ -692,7 +695,7 @@ mod tests {
 
         //Try with explicit compilation using the default engine
         let pat = Rosie::compile("{ [H][^]* }").unwrap();
-        let result = pat.match_str("Hello, Rosie!").unwrap();
+        let result : MatchResult = pat.match_str("Hello, Rosie!").unwrap();
         assert_eq!(result.matched_str(), "Hello, Rosie!");
     }
 
@@ -740,7 +743,7 @@ mod tests {
         assert!(raw_match_result.time_elapsed_matching() <= raw_match_result.time_elapsed_total()); //A little lame as tests go, but validates they are called at least.
 
         //Now try the match with the high-level match_str call
-        let match_result = pat.match_str("21").unwrap();
+        let match_result : MatchResult = pat.match_str("21").unwrap();
         assert_eq!(match_result.pat_name_str(), "*");
         assert_eq!(match_result.matched_str(), "21");
         assert_eq!(match_result.start(), 1);
@@ -748,7 +751,7 @@ mod tests {
         assert_eq!(match_result.sub_pat_count(), 0);
 
         //Try it against non-matching input, and make sure we get no match
-        let match_result = pat.match_str("99").unwrap();
+        let match_result : MatchResult = pat.match_str("99").unwrap();
         assert_eq!(match_result.did_match(), false);
 
         //Test the trace function, and make sure we get a reasonable result
@@ -774,7 +777,7 @@ mod tests {
 
         //Test matching a pattern with some recursive sub-patterns
         let mut date_pat = engine.compile("date.us_long", None).unwrap();
-        let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+        let match_result : MatchResult = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
         assert_eq!(match_result.pat_name_str(), "us_long");
         assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
         assert_eq!(match_result.start(), 1);
@@ -797,7 +800,6 @@ mod tests {
         // will flag it, so a human can take a look and ensure something more fundamental didn't break.
         assert_eq!(date_raw_match_result.as_str().len(), 625);
         assert_eq!(time_raw_match_result.as_str().len(), 453);
-
     }
 
     #[test]
@@ -837,7 +839,7 @@ mod tests {
                             _ => panic!()
                         };
     
-                        let result = pat.match_str(str_val).unwrap();
+                        let result : MatchResult = pat.match_str(str_val).unwrap();
     
                         match (pat_idx, str_idx) {
                             (0, 0) => assert_eq!(result.matched_str(), "Hello, Rosie!"),
