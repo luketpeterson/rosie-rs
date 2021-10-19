@@ -45,7 +45,6 @@
 //! Or to get the matched substring
 //! ```
 //! # use rosie_rs::*;
-//! //let the_string : String = Rosie::match_str("date.any", "Of course! Nov 5, 1955! That was the day"); GOAT, need to do global match
 //! let match_result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
 //! println!("Matched Substring = {}", match_result.matched_str());
 //! assert_eq!(match_result.matched_str(), "Nov 5, 1955");
@@ -697,6 +696,14 @@ mod tests {
         let pat = Rosie::compile("{ [H][^]* }").unwrap();
         let result : MatchResult = pat.match_str("Hello, Rosie!").unwrap();
         assert_eq!(result.matched_str(), "Hello, Rosie!");
+
+
+// //GOAT: QUESTION FOR JAMIE.  Why is this trace so uninformative compared to the trace of just "date.any"
+// let mut trace = RosieMessage::empty();
+// let pat = Rosie::compile("find:date.any").unwrap();
+// pat.trace(1, "Of course! Nov 5, 1955! That was the day", TraceFormat::Full, &mut trace);
+// println!("Trace = {}", trace.as_str());
+
     }
 
     #[test]
