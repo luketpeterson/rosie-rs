@@ -13,6 +13,7 @@ rosie-sys = { path = "../rosie-sys" } #GOAT, change this to pull from crates.io 
 once_cell = "1.8.0" # As soon as std::sync::SyncLazy is pushed to stable, we will migrate there and eliminate this dependency
 serde = { version = "*", features = ["derive"] } #NOTE: serde & serde_json promoted to full-on dependencies because of load_expression_deps.  This bugs me.
 serde_json = "*"
+linked-hash-map = "*" #For the LRU cache of compiled expressions
 
 [dev-dependencies]
 rand = "0.8.0"      # rand for the stress tests

@@ -32,14 +32,23 @@
 //! 
 //! There are 3 levels of depth at which you may access Rosie.
 //! 
-//! ### High-Level: With the `rosie_matches!` macro
+//! ### High-Level: With `Rosie::match_str()`
 //! 
-//! Just one-line!
+//! Just one-line to check for a match
 //! ```
-//! let matches = rosie_matches!("date.any", "Saturday, Nov 5, 1955");
-//! assert!(matches);
+//! use rosie_rs::*;
+//! 
+//! if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
+//!     println!("It Matches!");
+//! }
 //! ```
-//! GOAT, can I create a macro that returns a bool or a String depending on the way it's called??
+//! Or to get the matched substring
+//! ```
+//! # use rosie_rs::*;
+//! let the_str : &str = Rosie::match_str("date.any", "Of course! Nov 5, 1955! That was the day");
+//! println!("Matched Substr = {}", the_str);
+//! assert_eq!(the_str, "Nov 5, 1955");
+//! ```
 //! 
 //! Compiled patterns are managed automatically using a least-recently-used cache and they are recompiled as needed.
 //! 
@@ -68,6 +77,9 @@ use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::sync::Mutex;
+use std::cell::UnsafeCell;
+
+use linked_hash_map::LinkedHashMap;
 
 use once_cell::sync::Lazy; // TODO: As soon as std::sync::SyncLazy is pushed to stable, we will migrate there and eliminate this dependency
 
@@ -120,18 +132,39 @@ pub mod engine {
     pub use crate::sys_wrapper::RosieEngine;
 }
 
+//The number of compiled patterns in the pattern cache
+const PATTERN_CACHE_SIZE: usize = 8;
+
 //Global to track the state of librosie
 static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
-//Global per-thread singleton engines
-thread_local!{ static THREAD_ROSIE_ENGINE: RosieEngine = {
-    let mut messages = RosieMessage::empty();
-    if let Ok(engine) = RosieEngine::new(Some(&mut messages)) {
-        engine
-    } else {
-        panic!("ERROR Creating RosieEngine: {}", messages.as_str())
+//Global per-thread singleton engines, and pattern cache
+struct ThreadLocals {
+    engine : RosieEngine,
+    pattern_cache : LinkedHashMap<String, Pattern>
+}
+thread_local!{
+    //TODO: Waiting for the stabilization of `#[thread_local]` attribute so we can get rid of this UnsafeCell
+    // Don't want to pay the price of a RefCell for no reason
+    // https://github.com/rust-lang/rust/issues/29594
+    static THREAD_LOCALS : UnsafeCell<ThreadLocals> = UnsafeCell::new(ThreadLocals::new())
+}
+
+impl ThreadLocals {
+    fn new() -> Self {
+        Self {
+            engine : {
+                let mut messages = RosieMessage::empty();
+                if let Ok(engine) = RosieEngine::new(Some(&mut messages)) {
+                    engine
+                } else {
+                    panic!("ERROR Creating RosieEngine: {}", messages.as_str())
+                }
+            },
+            pattern_cache : LinkedHashMap::with_capacity(PATTERN_CACHE_SIZE)
+        }
     }
-};}
+}
 
 /// A buffer to obtain text from Rosie.
 /// 
@@ -183,6 +216,69 @@ impl RosieMessage {
         self.0.len()
     }
 }
+
+/// The interface to top-level rosie functionality
+pub struct Rosie ();
+
+impl Rosie {
+    /// Document this GOAT
+    pub fn match_str<'input, T>(expression : &str, input : &'input str) -> T 
+    where T : MatchOutput<'input> {
+        
+        THREAD_LOCALS.with(|locals_cell| {
+
+            //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
+            let locals : &mut ThreadLocals = unsafe{ &mut *locals_cell.get() };
+
+            //See if we have the expression in our pattern cache
+            let mut pat = if let Some(existing_pat) = locals.pattern_cache.remove(expression) {
+                existing_pat
+            } else {
+                //If we don't have the expression, make sure there is space for it in the cache
+                if locals.pattern_cache.len() > PATTERN_CACHE_SIZE-1 {
+                    //Toss out the least-recently-added item
+                    let _ = locals.pattern_cache.pop_front(); //GOAT, this is what I really want
+                }
+
+                //And compile the expression
+                locals.engine.load_expression_deps(expression, None).unwrap();
+                locals.engine.compile(expression, None).unwrap()
+            };
+
+            //Call the return-type-specific match call
+            let result = T::match_str(&mut pat, input).unwrap();
+
+            //Put the pattern back on the top of the LRU stack
+            locals.pattern_cache.insert(expression.to_string(), pat);
+
+            result
+        })
+    }
+}
+
+/// Implemented for types that can be returned by a match operation
+pub trait MatchOutput<'a> : Sized {
+    fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError>;
+}
+
+impl MatchOutput<'_> for bool {
+    fn match_str(pat : &mut Pattern, input : &str) -> Result<Self, RosieError> {
+        let raw_match_result = pat.match_raw(1, input, &MatchEncoder::Bool).unwrap();
+        Ok(raw_match_result.did_match())
+    }
+}
+
+impl <'a>MatchOutput<'a> for &'a str {
+    fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError> {
+        let match_result = pat.engine.match_pattern(pat.id, 1, input)?;
+        //Ok(match_result.into_matched_str()) //TO Make this work, I think I need to make match_str (not just match_raw) retain a borrow to the engine as well as the input, and then get rid of the MaybeOwned inside of MatchResult
+        Ok("goatgoat")
+    }
+}
+
+//GOAT, implement MatchOutput for MatchResult
+
+//GOAT, convert Pattern::match_str to use the generic return types as well
 
 /// This function can be used to set a custom location for the rosie_home path.
 /// 
@@ -254,6 +350,8 @@ impl Drop for Pattern {
     }
 }
 
+//GOAT, include Rosie badge in RustDoc
+
 impl Pattern {
     /// Compiles the specified expression, returning a `Pattern` that can then be used to match that expression.
     /// 
@@ -280,18 +378,28 @@ impl Pattern {
     /// ```
     /// 
     pub fn compile(expression : &str) -> Result<Self, RosieError> {
-        THREAD_ROSIE_ENGINE.with(|engine| {        
-            engine.load_expression_deps(expression, None)?;
-            engine.compile(expression, None)
+        THREAD_LOCALS.with(|locals_cell| {
+            
+            //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
+            let locals : &ThreadLocals = unsafe{ &*locals_cell.get() };
+
+            //GOAT, Clean up this, either by calling this from Rosie::match_str
+            locals.engine.load_expression_deps(expression, None)?;
+            locals.engine.compile(expression, None)
         })
     }
 
-//GOAT, Create a macro.  rosie_match!().  pattern string, input string, output is a String
-//Used a per-thread pattern-cache, that is a HashMap of i32s
+//GOAT, look at a "set / take" default engine model.
+//      See if I can check if a thread-local is initialized, so I don't need to wrap it in an Option.
+// IMPORTANT.  Taking the default engine must invalidate the pattern cache
     
     /// Matches the `Pattern` in the specified `input` string.
     /// 
     /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
+    /// 
+    /// NOTE: This function may return several different return types, including [bool], [&str], and [MatchResult].
+    /// If you need the fastest possible performance calling this method to return a [bool] will use the
+    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input>(&self, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
         self.engine.match_pattern(self.id, 1, input)
     }
@@ -299,9 +407,7 @@ impl Pattern {
     /// Matches the `Pattern` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
     /// 
     /// Returns a [RawMatchResult] or an error code if a problem was encountered.  This is a lower-level API than [match_str](Pattern::match_str),
-    /// and there are two situations where you might want to use it:
-    /// - If you want to the output from a particular [MatchEncoder]
-    /// - If you need the fastest possible match performance, using the [Bool](MatchEncoder::Bool) encoder
+    /// and the primary reason to use it is to get the output from a particular [MatchEncoder].  For example, the [JSON](MatchEncoder::JSON) or [JSONPretty](MatchEncoder::JSONPretty) encoders.
     /// 
     /// **NOTE**: The returned [RawMatchResult] takes a mutable borrow of the `Pattern` because it references internal data
     /// associated with the `Pattern`.  Therefore the `Pattern` cannot be accessed while the RawMatchResult is in use; copying
@@ -391,7 +497,7 @@ pub struct MatchResult<'a> {
     subs : Vec<MatchResult<'a>>
 }
 
-impl MatchResult<'_> {
+impl <'a>MatchResult<'a> {
 
     //This function is a port from the python code here: https://gitlab.com/rosie-community/clients/python/-/blob/master/rosie/decode.py
     fn from_bytes_buffer<'input>(input : &'input str, match_buffer : &mut &[u8], existing_start_pos : Option<usize>) -> MatchResult<'input> {
@@ -510,6 +616,11 @@ impl MatchResult<'_> {
     pub fn matched_str(&self) -> &str {
         self.data.as_str()
     }
+    //GOAT, Make the below work, once I've eliminated the MaybeOwned string inside MatchResult
+    // /// Returns the subset of the input that was matched by the pattern, consuming the MatchResult
+    // pub fn into_matched_str(self) -> &'a str {
+    //     self.data.into_str()
+    // }
     /// Returns the character offset of the beginning of the match, within the input
     /// 
     /// NOTE: Offsets are 1-based
@@ -578,6 +689,13 @@ mod tests {
         let pat = Pattern::compile("{ [H][^]* }").unwrap();
         let result = pat.match_str("Hello, Rosie!").unwrap();
         assert_eq!(result.matched_str(), "Hello, Rosie!");
+
+        if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
+            println!("GOAT YES");
+        } else {
+            println!("GOAT NO");
+        }
+
     }
 
     #[test]
@@ -671,12 +789,16 @@ mod tests {
         assert!(sub_match_pat_names.contains(&"year"));
 
         //Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
-        //Test the JSONPretty encoder while we're at it
+        //Also test the JSONPretty encoder while we're at it
         engine.load_expression_deps("time.any", None).unwrap();
         let mut time_pat = engine.compile("time.any", None).unwrap();
         let date_raw_match_result = date_pat.match_raw(1, "Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
         let time_raw_match_result = time_pat.match_raw(1, "2:21 am", &MatchEncoder::JSONPretty).unwrap();
         assert!(date_raw_match_result.as_str() != time_raw_match_result.as_str());
+        //NOTE: I know these checks might break with perfectly legal changes to JSON formatting, but at least they
+        // will flag it, so a human can take a look and ensure something more fundamental didn't break.
+        assert_eq!(date_raw_match_result.as_str().len(), 625);
+        assert_eq!(time_raw_match_result.as_str().len(), 453);
 
     }
 
@@ -684,7 +806,7 @@ mod tests {
     /// Tests a whole bunch of threads all doing compiling and matching at the same time
     fn thread_stress() {
 
-        const NUM_THREADS : usize = 100;
+        const NUM_THREADS : usize = 1; //GOAT, this should be 100
         const NUM_ITERATIONS : usize = 100; //Each iteration includes a compile
         const NUM_MATCHES : usize = 500; //Number of matches to perform each iteration
 
