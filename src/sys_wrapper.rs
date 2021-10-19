@@ -181,7 +181,7 @@ impl RosieEngine {
     }
     /// Compiles the specified expression into a `Pattern` hosted by the `Engine`.
     /// 
-    /// This is a lower-level interface than [Pattern::compile].  Expression dependencies must be manually imported using
+    /// This is a lower-level interface than [Rosie::compile].  Expression dependencies must be manually imported using
     /// any of [load_expression_deps](RosieEngine::load_expression_deps), [RosieEngine::load_pkg_from_str],
     /// [RosieEngine::load_pkg_from_file], or [RosieEngine::import_pkg].
     /// 

@@ -51,8 +51,6 @@
 //! assert_eq!(match_result.matched_str(), "Nov 5, 1955");
 //! ```
 //! 
-//! Compiled patterns are managed automatically using a least-recently-used cache and they are recompiled as needed.
-//! 
 //! ### Mid-Level: With compiled Patterns
 //! 
 //! Explicit compilation reduces overhead because you can manage compiled patterns yourself, dropping the patterns you don't need
@@ -60,7 +58,7 @@
 //! ```
 //! use rosie_rs::*;
 //! 
-//! let date_pat = Pattern::compile("date.us_long").unwrap();
+//! let date_pat = Rosie::compile("date.us_long").unwrap();
 //! let match_result = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
 //! println!("did_match = {}", match_result.did_match());
 //! println!("matched_str = {}", match_result.matched_str());
@@ -70,8 +68,6 @@
 //! 
 //! See [engine] for details.
 //! 
-
-//GOAT, I think next I should create a "Rosie" object, and make "compile" be a member of that, along with set_rosie_home, and the call to execute stuff with the default engine.
 
 use std::str;
 use std::convert::{TryFrom, TryInto};
@@ -222,10 +218,17 @@ impl RosieMessage {
 pub struct Rosie ();
 
 impl Rosie {
-    /// Document this GOAT
+    /// Matches the specified `expression` in the specified `input` string.
+    /// 
+    /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
+    /// 
+    /// Compiled patterns are managed automatically using a least-recently-used cache and are recompiled as needed.
+    /// 
+    /// NOTE: This function may return several different return types, including [bool], [String], and [MatchResult].
+    /// If you need the fastest possible performance calling this method to return a [bool] will use the
+    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input, T>(expression : &str, input : &'input str) -> T 
     where T : MatchOutput<'input> {
-        
         THREAD_LOCALS.with(|locals_cell| {
 
             //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
@@ -255,6 +258,51 @@ impl Rosie {
             result
         })
     }
+    /// Compiles the specified expression, returning a `Pattern` that can then be used to match that expression.
+    /// 
+    /// The expression may be either the name of a previously loaded `rpl` pattern, or it may be a raw `rpl` expression.
+    /// 
+    /// **NOTE**: This function is high-level.  If you want more control, performance, or feedback, see [RosieEngine::compile].
+    /// 
+    /// - This function automatically evaluates the expression for dependencies and automatically loads any dependencies it
+    /// finds, while RosieEngine::compile skips the dependency analysis
+    /// - This function's returned `Pattern` will be hosted by the thread's default engine.  RosieEngine::compile allows you
+    /// to host the Pattern on another engine
+    /// - This function doesn't provide any compile warnings or errors.  To debug a compilation failure, call
+    /// RosieEngine::compile
+    /// 
+    /// # Examples
+    /// ```
+    /// # use rosie_rs::*;
+    /// let date_pat = Rosie::compile("date.us_long").unwrap();
+    /// ```
+    /// 
+    /// ```
+    /// # use rosie_rs::*;
+    /// let two_digit_year_pat = Rosie::compile("{[012][0-9]}").unwrap();
+    /// ```
+    /// 
+    pub fn compile(expression : &str) -> Result<Pattern, RosieError> {
+        THREAD_LOCALS.with(|locals_cell| {
+            
+            //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
+            let locals : &ThreadLocals = unsafe{ &*locals_cell.get() };
+
+            locals.engine.load_expression_deps(expression, None)?;
+            locals.engine.compile(expression, None)
+        })
+    }
+    /// This method can be used to set a custom location for the rosie_home path.
+    /// 
+    /// **WARNING** This method must be called before any other rosie calls, or it will not be sucessful
+    pub fn set_rosie_home_path<P: AsRef<Path>>(path: P) {
+        librosie_init(Some(path))
+    }
+
+    //GOAT, look at a "set / take" default engine model.
+//      See if I can check if a thread-local is initialized, so I don't need to wrap it in an Option.
+// IMPORTANT.  Taking the default engine must invalidate the pattern cache
+
 }
 
 /// Implemented for types that can be returned by a match operation
@@ -283,13 +331,6 @@ impl <'a>MatchOutput<'a> for MatchResult<'a> {
 }
 
 //GOAT, convert Pattern::match_str to use the generic return types as well
-
-/// This function can be used to set a custom location for the rosie_home path.
-/// 
-/// **WARNING** This function must be called before any other rosie calls, or it will not be sucessful
-pub fn set_rosie_home_path<P: AsRef<Path>>(path: P) {
-    librosie_init(Some(path))
-}
 
 //Private function to make sure librosie is initialized and initialize it if it isn't
 //Internal NOTE: This function is responsible for internal librosie initialization, so it is also called by RosieEngine::new()
@@ -357,51 +398,12 @@ impl Drop for Pattern {
 //GOAT, include Rosie badge in RustDoc
 
 impl Pattern {
-    /// Compiles the specified expression, returning a `Pattern` that can then be used to match that expression.
-    /// 
-    /// The expression may be either the name of a previously loaded `rpl` pattern, or it may be a raw `rpl` expression.
-    /// 
-    /// **NOTE**: This function is high-level.  If you want more control, performance, or feedback, see [RosieEngine::compile].
-    /// 
-    /// - This function automatically evaluates the expression for dependencies and automatically loads any dependencies it
-    /// finds, while RosieEngine::compile skips the dependency analysis
-    /// - This function's returned `Pattern` will be hosted by the thread's default engine.  RosieEngine::compile allows you
-    /// to host the Pattern on another engine
-    /// - This function doesn't provide any compile warnings or errors.  To debug a compilation failure, call
-    /// RosieEngine::compile
-    /// 
-    /// # Examples
-    /// ```
-    /// # use rosie_rs::*;
-    /// let date_pat = Pattern::compile("date.us_long").unwrap();
-    /// ```
-    /// 
-    /// ```
-    /// # use rosie_rs::*;
-    /// let two_digit_year_pat = Pattern::compile("{[012][0-9]}").unwrap();
-    /// ```
-    /// 
-    pub fn compile(expression : &str) -> Result<Self, RosieError> {
-        THREAD_LOCALS.with(|locals_cell| {
-            
-            //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
-            let locals : &ThreadLocals = unsafe{ &*locals_cell.get() };
-
-            //GOAT, Clean up this, either by calling this from Rosie::match_str
-            locals.engine.load_expression_deps(expression, None)?;
-            locals.engine.compile(expression, None)
-        })
-    }
-
-//GOAT, look at a "set / take" default engine model.
-//      See if I can check if a thread-local is initialized, so I don't need to wrap it in an Option.
-// IMPORTANT.  Taking the default engine must invalidate the pattern cache
-    
+        
     /// Matches the `Pattern` in the specified `input` string.
     /// 
-    /// Returns a [MatchResult] if a match was found, otherwise returns an appropriate error code.
+    /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
     /// 
-    /// NOTE: This function may return several different return types, including [bool], [&str], and [MatchResult].
+    /// NOTE: This function may return several different return types, including [bool], [String], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
     /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input>(&self, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
@@ -439,7 +441,7 @@ impl Pattern {
     ///     subs : Vec<JSONMatchResult> // The sub-matches within the pattern
     /// }
     /// 
-    /// let mut date_pat = Pattern::compile("date.any").unwrap();
+    /// let mut date_pat = Rosie::compile("date.any").unwrap();
     /// let raw_result = date_pat.match_raw(1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
     /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
     /// ```
@@ -460,7 +462,7 @@ impl Pattern {
     /// # Example
     /// ```
     /// # use rosie_rs::*;
-    /// let date_pat = Pattern::compile("date.any").unwrap();
+    /// let date_pat = Rosie::compile("date.any").unwrap();
     /// 
     /// let mut trace = RosieMessage::empty();
     /// let did_match = date_pat.trace(1, "Sat. Nov. 5, 1955", TraceFormat::Condensed, &mut trace).unwrap();
@@ -685,16 +687,13 @@ mod tests {
     /// A simple test to make sure we can do a basic match with the default singleton engine
     fn default_engine() {
 
-        let pat = Pattern::compile("{ [H][^]* }").unwrap();
+        //Try with the one liner, returning a bool
+        assert!(Rosie::match_str::<bool>("{ [H][^]* }", "Hello, Rosie!"));
+
+        //Try with explicit compilation using the default engine
+        let pat = Rosie::compile("{ [H][^]* }").unwrap();
         let result = pat.match_str("Hello, Rosie!").unwrap();
         assert_eq!(result.matched_str(), "Hello, Rosie!");
-
-        if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
-            println!("GOAT YES");
-        } else {
-            println!("GOAT NO");
-        }
-
     }
 
     #[test]
@@ -826,7 +825,7 @@ mod tests {
                         _ => panic!()
                     };
 
-                    let pat = Pattern::compile(pat_expr).unwrap();
+                    let pat = Rosie::compile(pat_expr).unwrap();
 
                     for _ in 0..NUM_MATCHES {
 
