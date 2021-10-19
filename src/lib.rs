@@ -45,9 +45,10 @@
 //! Or to get the matched substring
 //! ```
 //! # use rosie_rs::*;
-//! let the_str : &str = Rosie::match_str("date.any", "Of course! Nov 5, 1955! That was the day");
-//! println!("Matched Substr = {}", the_str);
-//! assert_eq!(the_str, "Nov 5, 1955");
+//! //let the_string : String = Rosie::match_str("date.any", "Of course! Nov 5, 1955! That was the day"); GOAT, need to do global match
+//! let match_result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
+//! println!("Matched Substring = {}", match_result.matched_str());
+//! assert_eq!(match_result.matched_str(), "Nov 5, 1955");
 //! ```
 //! 
 //! Compiled patterns are managed automatically using a least-recently-used cache and they are recompiled as needed.
@@ -237,7 +238,7 @@ impl Rosie {
                 //If we don't have the expression, make sure there is space for it in the cache
                 if locals.pattern_cache.len() > PATTERN_CACHE_SIZE-1 {
                     //Toss out the least-recently-added item
-                    let _ = locals.pattern_cache.pop_front(); //GOAT, this is what I really want
+                    let _ = locals.pattern_cache.pop_front();
                 }
 
                 //And compile the expression
@@ -268,15 +269,18 @@ impl MatchOutput<'_> for bool {
     }
 }
 
-impl <'a>MatchOutput<'a> for &'a str {
+impl <'a>MatchOutput<'a> for String {
     fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError> {
         let match_result = pat.engine.match_pattern(pat.id, 1, input)?;
-        //Ok(match_result.into_matched_str()) //TO Make this work, I think I need to make match_str (not just match_raw) retain a borrow to the engine as well as the input, and then get rid of the MaybeOwned inside of MatchResult
-        Ok("goatgoat")
+        Ok(match_result.matched_str().to_string())
     }
 }
 
-//GOAT, implement MatchOutput for MatchResult
+impl <'a>MatchOutput<'a> for MatchResult<'a> {
+    fn match_str(pat : &mut Pattern, input : &'a str) -> Result<Self, RosieError> {
+        pat.engine.match_pattern(pat.id, 1, input)
+    }
+}
 
 //GOAT, convert Pattern::match_str to use the generic return types as well
 
@@ -616,11 +620,6 @@ impl <'a>MatchResult<'a> {
     pub fn matched_str(&self) -> &str {
         self.data.as_str()
     }
-    //GOAT, Make the below work, once I've eliminated the MaybeOwned string inside MatchResult
-    // /// Returns the subset of the input that was matched by the pattern, consuming the MatchResult
-    // pub fn into_matched_str(self) -> &'a str {
-    //     self.data.into_str()
-    // }
     /// Returns the character offset of the beginning of the match, within the input
     /// 
     /// NOTE: Offsets are 1-based
