@@ -1,4 +1,4 @@
-#![crate_name = "rosie_rs"]
+#![crate_name = "rosie"]
 
 #![doc(html_logo_url = "https://rosie-lang.org/images/rosie-circle-blog.png")]
 //GOAT, Question for Jamie, can she host a version of this logo that doesn't have a border?  i.e. just the circle occupying the whole frame, with an alpha-channel so the corners are transparent
@@ -39,7 +39,7 @@
 //! 
 //! Just one-line to check for a match
 //! ```
-//! use rosie_rs::*;
+//! use rosie::*;
 //! 
 //! if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
 //!     println!("It Matches!");
@@ -47,7 +47,7 @@
 //! ```
 //! Or to get the matched substring
 //! ```
-//! # use rosie_rs::*;
+//! # use rosie::*;
 //! let result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
 //! println!("Matched Substring = {}", result.matched_str());
 //! assert_eq!(result.matched_str(), "Nov 5, 1955");
@@ -58,7 +58,7 @@
 //! Explicit compilation reduces overhead because you can manage compiled patterns yourself, dropping the patterns you don't need
 //! and avoiding unnecessary recompilation.
 //! ```
-//! use rosie_rs::*;
+//! use rosie::*;
 //! 
 //! let date_pat = Rosie::compile("date.us_long").unwrap();
 //! let result : MatchResult = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
@@ -120,7 +120,7 @@ pub use rosie_sys::TraceFormat;
 /// 
 /// ## Example Usage
 /// ```
-/// use rosie_rs::*;
+/// use rosie::*;
 /// let mut engine = engine::RosieEngine::new(None).unwrap();
 /// engine.import_pkg("date", None, None);
 /// 
@@ -173,7 +173,7 @@ impl ThreadLocals {
 /// 
 /// # Example: Getting Messages from the Expression Compiler
 /// ```
-/// # use rosie_rs::*;
+/// # use rosie::*;
 /// let mut engine = engine::RosieEngine::new(None).unwrap();
 /// let mut message = RosieMessage::empty();
 /// engine.compile("invalid pattern", Some(&mut message));
@@ -276,12 +276,12 @@ impl Rosie {
     /// 
     /// # Examples
     /// ```
-    /// # use rosie_rs::*;
+    /// # use rosie::*;
     /// let date_pat = Rosie::compile("date.us_long").unwrap();
     /// ```
     /// 
     /// ```
-    /// # use rosie_rs::*;
+    /// # use rosie::*;
     /// let two_digit_year_pat = Rosie::compile("{[012][0-9]}").unwrap();
     /// ```
     /// 
@@ -463,7 +463,7 @@ impl Pattern {
     /// ```
     /// extern crate serde_json;
     /// use serde::{*};
-    /// use rosie_rs::*;
+    /// use rosie::*;
     /// 
     /// #[derive(Debug, Deserialize)]
     /// struct JSONMatchResult {
@@ -498,7 +498,7 @@ impl Pattern {
     /// 
     /// # Example
     /// ```
-    /// # use rosie_rs::*;
+    /// # use rosie::*;
     /// let date_pat = Rosie::compile("date.any").unwrap();
     /// 
     /// let mut trace = RosieMessage::empty();
@@ -741,6 +741,8 @@ mod tests {
         let engine = RosieEngine::new(None).unwrap();
         Rosie::replace_thread_default_engine(engine);
         let new_pat = Rosie::compile("{ [H][^]* }").unwrap();
+        assert!(pat.match_str::<bool>("Hello, Rosie!").unwrap());
+        assert!(new_pat.match_str::<bool>("Hello, Rosie!").unwrap());
 
 
 // //GOAT: QUESTION FOR JAMIE.  Why is this trace so uninformative compared to the trace of just "date.any"

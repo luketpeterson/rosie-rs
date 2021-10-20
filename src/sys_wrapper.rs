@@ -187,7 +187,7 @@ impl RosieEngine {
     /// 
     /// # Examples
     /// ```
-    /// # use rosie_rs::*;
+    /// # use rosie::*;
     /// let mut engine = engine::RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
     /// let date_pat = engine.compile("date.us_long", None).unwrap();
@@ -372,14 +372,14 @@ impl RosieEngine {
     /// # Examples
     /// Without an alias:
     /// ```
-    /// # use rosie_rs::*;
+    /// # use rosie::*;
     /// let mut engine = engine::RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", None, None);
     /// let date_pat = engine.compile("date.any", None).unwrap();
     /// ```
     /// With an alias:
     /// ```
-    /// # use rosie_rs::*;
+    /// # use rosie::*;
     /// let mut engine = engine::RosieEngine::new(None).unwrap();
     /// engine.import_pkg("date", Some("special_date"), None);
     /// let date_pat = engine.compile("special_date.any", None).unwrap();
