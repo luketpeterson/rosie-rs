@@ -1,5 +1,8 @@
 #![crate_name = "rosie_rs"]
 
+#![doc(html_logo_url = "https://rosie-lang.org/images/rosie-circle-blog.png")]
+//GOAT, Question for Jamie, can she host a version of this logo that doesn't have a border?  i.e. just the circle occupying the whole frame, with an alpha-channel so the corners are transparent
+
 //! # rosie-rs Overview
 //! This crate implements a high-level interface to the [**Rosie**](https://rosie-lang.org/about/) matching engine for the [**Rosie Pattern Language**](https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/README.md)\(`rpl`\).
 //! 
@@ -45,9 +48,9 @@
 //! Or to get the matched substring
 //! ```
 //! # use rosie_rs::*;
-//! let match_result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
-//! println!("Matched Substring = {}", match_result.matched_str());
-//! assert_eq!(match_result.matched_str(), "Nov 5, 1955");
+//! let result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
+//! println!("Matched Substring = {}", result.matched_str());
+//! assert_eq!(result.matched_str(), "Nov 5, 1955");
 //! ```
 //! 
 //! ### Mid-Level: With compiled Patterns
@@ -58,9 +61,9 @@
 //! use rosie_rs::*;
 //! 
 //! let date_pat = Rosie::compile("date.us_long").unwrap();
-//! let match_result : MatchResult = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
-//! println!("did_match = {}", match_result.did_match());
-//! println!("matched_str = {}", match_result.matched_str());
+//! let result : MatchResult = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+//! println!("did_match = {}", result.did_match());
+//! println!("matched_str = {}", result.matched_str());
 //! ```
 //! 
 //! ### Low-Level: With a RosieEngine
@@ -121,7 +124,7 @@ pub use rosie_sys::TraceFormat;
 /// engine.import_pkg("date", None, None);
 /// 
 /// let date_pat = engine.compile("date.us_long", None).unwrap();
-/// let matched_string : String = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
+/// assert!(date_pat.match_str::<bool>("Saturday, Nov 5, 1955").unwrap());
 /// ```
 /// 
 pub mod engine {
@@ -319,12 +322,21 @@ impl MatchOutput<'_> for bool {
     }
 }
 
-impl <'a>MatchOutput<'a> for String {
-    fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError> {
-        let match_result = pat.engine.match_pattern(pat.id, 1, input)?;
-        Ok(match_result.matched_str().to_string())
-    }
-}
+//IMPLEMENTATION NOTE: I chose to delete the `String` implementation because the common case for MatchResult, i.e. the case where the
+// pattern is not a constant-capture pattern means that the matched string is just a slice referencing the input.  But the `String`
+// implementation forces a copy in every situation.  So we want to accidentally direct people to the slow-path by making it convenient.
+//
+//In a perfect world, I would like there to be an implementation for `&'a str`, but the problem with that is constant-capture patterns
+// point to data that isn't in the input.  I went pretty far into a change that got rid of the MaybeOwnedString inside of MatchResult,
+// in order to implement `MatchResult::into_str`, but that meant constant-capture patterns (and therefore all MatchResults) needed to
+// borrow the engine buffer associated with the pattern (like a RawMatchResult does).  This is unworkable because of the pattern cache.
+//
+// impl <'a>MatchOutput<'a> for String {
+//     fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError> {
+//         let match_result = pat.engine.match_pattern(pat.id, 1, input)?;
+//         Ok(match_result.matched_str().to_string())
+//     }
+// }
 
 impl <'a>MatchOutput<'a> for MatchResult<'a> {
     fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError> {
@@ -394,8 +406,6 @@ impl Drop for Pattern {
         unsafe { rosie_free_rplx(self.engine.ptr(), self.id) };
     }
 }
-
-//GOAT, include Rosie badge in RustDoc
 
 impl Pattern {
         

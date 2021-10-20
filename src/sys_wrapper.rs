@@ -31,7 +31,7 @@ use rosie_sys::{
     rosie_expression_deps,
 };
 use crate::sys_shadow::{*};
-use crate::{RosieMessage, Pattern, MatchResult, librosie_init};
+use crate::{*};
 
 //A wrapper around an EnginePtr so we can implement Drop
 //NOTE: Only pub within this crate
