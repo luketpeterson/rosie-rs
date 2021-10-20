@@ -71,6 +71,7 @@
 //! See [engine] for details.
 //! 
 
+use core::mem::swap;
 use std::str;
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
@@ -137,7 +138,7 @@ const PATTERN_CACHE_SIZE: usize = 8;
 //Global to track the state of librosie
 static LIBROSIE_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
-//Global per-thread singleton engines, and pattern cache
+//Global per-thread singleton engine and pattern cache
 struct ThreadLocals {
     engine : RosieEngine,
     pattern_cache : LinkedHashMap<String, Pattern>
@@ -294,17 +295,41 @@ impl Rosie {
             locals.engine.compile(expression, None)
         })
     }
-    /// This method can be used to set a custom location for the rosie_home path.
+    /// Sets a custom location for the rosie_home path used for support scripts and the default Standard Pattern Library. 
     /// 
     /// **WARNING** This method must be called before any other rosie calls, or it will not be sucessful
     pub fn set_rosie_home_path<P: AsRef<Path>>(path: P) {
         librosie_init(Some(path))
     }
+    /// Returns the thread's default RosieEngine, replacing it with a newly initialized engine
+    /// 
+    /// NOTE: This will clear the compiled pattern cache used by [Rosie::match_str]
+    /// 
+    pub fn take_thread_default_engine() -> RosieEngine {
+        THREAD_LOCALS.with(|locals_cell| {
 
-    //GOAT, look at a "set / take" default engine model.
-//      See if I can check if a thread-local is initialized, so I don't need to wrap it in an Option.
-// IMPORTANT.  Taking the default engine must invalidate the pattern cache
+            //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
+            let locals : &mut ThreadLocals = unsafe{ &mut *locals_cell.get() };
 
+            let mut new_locals = ThreadLocals::new();
+            swap(&mut new_locals, locals);
+            new_locals.engine
+        })
+    }
+    /// Replaces the thread's default RosieEngine with the engine supplied
+    /// 
+    /// NOTE: This will clear the compiled pattern cache used by [Rosie::match_str]
+    /// 
+    pub fn replace_thread_default_engine(engine : RosieEngine) {
+        THREAD_LOCALS.with(|locals_cell| {
+
+            //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
+            let locals : &mut ThreadLocals = unsafe{ &mut *locals_cell.get() };
+
+            locals.engine = engine;
+            locals.pattern_cache = LinkedHashMap::with_capacity(PATTERN_CACHE_SIZE);
+        })
+    }
 }
 
 /// Implemented for types that can be returned by a match operation
@@ -696,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    /// A simple test to make sure we can do a basic match with the default singleton engine
+    /// Some tests for working with the default thread singleton engine
     fn default_engine() {
 
         //Try with the one liner, returning a bool
@@ -706,6 +731,16 @@ mod tests {
         let pat = Rosie::compile("{ [H][^]* }").unwrap();
         let result : MatchResult = pat.match_str("Hello, Rosie!").unwrap();
         assert_eq!(result.matched_str(), "Hello, Rosie!");
+
+        //Take the default engine and then drop it, but make sure extant patterns aren't affected
+        let engine = Rosie::take_thread_default_engine();
+        drop(engine);
+        assert!(pat.match_str::<bool>("Hello, Rosie!").unwrap());
+
+        //Create a new explicit engine, and make it the default, and ensure everything is ok
+        let engine = RosieEngine::new(None).unwrap();
+        Rosie::replace_thread_default_engine(engine);
+        let new_pat = Rosie::compile("{ [H][^]* }").unwrap();
 
 
 // //GOAT: QUESTION FOR JAMIE.  Why is this trace so uninformative compared to the trace of just "date.any"
@@ -823,7 +858,7 @@ mod tests {
     /// Tests a whole bunch of threads all doing compiling and matching at the same time
     fn thread_stress() {
 
-        const NUM_THREADS : usize = 1; //GOAT, this should be 100
+        const NUM_THREADS : usize = 100;
         const NUM_ITERATIONS : usize = 100; //Each iteration includes a compile
         const NUM_MATCHES : usize = 500; //Number of matches to perform each iteration
 
