@@ -47,10 +47,8 @@ impl Drop for RawEngine {
 /// The Rust object representing a Rosie engine.  Used when direct access to rosie engines is desired.
 /// 
 /// **NOTE**: RosieEngines are not internally thread-safe and don't implemnt [Sync] or [Send].  You may create more than one RosieEngine in
-/// order to use multiple threads.  Also there is a thread-local `default_engine` accessible through [Rosie::with_default_engine].
+/// order to use multiple threads.  Also there is a thread-local `default_engine` accessible through [Rosie::take_thread_default_engine] and [Rosie::replace_thread_default_engine].
 /// 
-// TODO: This is a 3-level indirection because the RawEngine itself is a ptr.  Maybe this can be improved
-// if this turns out to be a bottleneck.);
 pub struct RosieEngine(Rc<RawEngine>);
 
 impl RosieEngine {
@@ -133,10 +131,10 @@ impl RosieEngine {
     /// Passing 0 will remove the allocation limit and thus permit the engine to make unlimited memory allocations.
     /// 
     /// **NOTE**: The allocation limit allows the engine to allocate `new_limit` bytes **Above** the current memory usage.  For example,
-    /// if the engine were currently using 3000 bytes, and you called this function with a `new_limit` value of 10000, then the engine
+    /// if the engine were currently using 3000 bytes, and you called this method with a `new_limit` value of 10000, then the engine
     /// would be permitted to consume 13000 bytes in total.
     /// 
-    /// **NOTE**: This function will panic if the `new_limit` argument is higher than 2GB.
+    /// **NOTE**: This method will panic if the `new_limit` argument is higher than 2GB.
     pub fn set_mem_alloc_limit(&mut self, new_limit : usize) -> Result<(), RosieError> {
         let mut new_limit_mut = i32::try_from(new_limit).unwrap();
         let mut usage : i32 = 0;
@@ -289,6 +287,14 @@ impl RosieEngine {
     /// 
     /// **NOTE**: The specified text must contain a `package` declaration, to provide the name of the package in the pattern namespace.
     /// 
+    /// # Example
+    /// ```
+    /// # use rosie::*;
+    /// # let mut engine = engine::RosieEngine::new(None).unwrap();
+    /// let pkg_name = engine.load_pkg_from_str("package two_digit_year\n\nyear = {[012][0-9]}", None).unwrap();
+    /// assert_eq!(pkg_name.as_str(), "two_digit_year");
+    /// ```
+    /// 
     //INTERNAL NOTE: The call performs internal mutation on the engine, but it's safe because the mutated components can't
     // be referenced. See note on `RosieEngine::compile()`
     pub fn load_pkg_from_str(&self, rpl_text : &str, messages : Option<&mut RosieMessage>) -> Result<RosieMessage, RosieError> {
@@ -364,7 +370,7 @@ impl RosieEngine {
     /// the [MatchResult] and [RawMatchResult] structures.
     /// 
     /// **NOTE**: Usually, the returned [RosieMessage] will match the `pkg_name` argument, but this will not always be the case.
-    /// This function searches all directories that are part of the engine's `lib_path` (set using [lib_path](RosieEngine::lib_path)),
+    /// This method searches all directories that are part of the engine's `lib_path` (set using [lib_path](RosieEngine::lib_path)),
     /// searching for files named '`pkg_name.rpl`'.  When it finds the relevant `.rpl` file, the file is loaded and parsed,
     /// and the package name from the package's `package` declaration is returned.  It is a best practice for the filename to match the
     /// `package` declaration, but it is not enforced or required.

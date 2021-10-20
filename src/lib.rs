@@ -3,33 +3,25 @@
 #![doc(html_logo_url = "https://rosie-lang.org/images/rosie-circle-blog.png")]
 //GOAT, Question for Jamie, can she host a version of this logo that doesn't have a border?  i.e. just the circle occupying the whole frame, with an alpha-channel so the corners are transparent
 
-//! # rosie-rs Overview
+//! # Rosie Rust Interface Overview
 //! This crate implements a high-level interface to the [**Rosie**](https://rosie-lang.org/about/) matching engine for the [**Rosie Pattern Language**](https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/README.md)\(`rpl`\).
 //! 
 //! Complete reference documentation for `rpl` is [here](https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/doc/rpl.md),
 //! and additional examples can be found [here](https://gitlab.com/rosie-pattern-language/rosie/-/blob/master/extra/examples/README.md).
 //! 
-//! ## Installation
-//! This crate dynamically links against the `librosie` library already installed on the target system.  Therefore `librosie` must be installed prior to using this crate.
-//! 
-//! Complete installation info is [here](https://gitlab.com/rosie-pattern-language/rosie#local-installation).
-//! However, Rosie may be available through your package-manager of choice.  For example, you may run one of the following:
-//! 
-// * `apt-get install rosie`  Q-01.05 QUESTION apt packaged needed!!
-//! * `dnf install rosie`
-//! * `brew install rosie`
-//! 
-//! Or if you would prefer to install Rosie from source, [Here](https://rosie-lang.org/blog/2020/05/03/new-build.html) are instructions.
-//! 
-//! **NOTE**: This crate has been tested aganst `librosie` version **1.2.2**, although it may be compatible with other versions.
-//! 
-//! **NOTE**: In the future, I would like to create a rosie-sys crate, that could build `librosie` from source, and also provide an option for static linking.
-// (Q-01.02 QUESTION & Q-01.01 QUESTION)
-//! 
 //! ## In Cargo.toml
-//! Add the following line to your Cargo.toml `[dependencies]` section:
+//! To build Rosie as part of your project, add the following line to your Cargo.toml `[dependencies]` section:
 //! 
-//! `rosie-rs = "0.1.0"`
+//! `rosie = { features = ["build_static_librosie"] }`
+//! 
+//! To build Rosie to link against a shared librosie, already installed on the system, add the following line instead:
+//! 
+//! `rosie = { features = ["link_shared_librosie"] }`
+//! 
+//! ## Deployment
+//! 
+//! Rosie depends on a `rosie_home` directory, containing support files including the Standard Pattern Library. See the
+//! `Deployment` section of the [rosie_sys] crate's `README` for deployment instructions.
 //! 
 //! ## Usage
 //! 
@@ -72,6 +64,8 @@
 //! 
 
 use core::mem::swap;
+use core::fmt;
+use core::fmt::Display;
 use std::str;
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
@@ -99,7 +93,7 @@ use sys_wrapper::{*};
 //Public re-exports
 mod sys_shadow; //Shadow implementations of things from rosie_sys::
 pub use sys_shadow::RosieError; //pub use rosie_sys::RosieError;
-/// An Encoder Module used to format the results, when using [Pattern::match_raw]
+/// An Encoder module used to format the results, when using [Pattern::match_raw]
 pub use rosie_sys::MatchEncoder;
 /// A structure containing the match results from a [Pattern::match_raw] call.
 /// 
@@ -171,13 +165,13 @@ impl ThreadLocals {
 /// The contents of the buffer depend on the situation under which it is returned.
 /// Sometimes the returned text is formatted as JSON and other times it is a human-readable message.
 /// 
-/// # Example: Getting Messages from the Expression Compiler
+/// # Example: Getting a message from the expression compiler
 /// ```
 /// # use rosie::*;
 /// let mut engine = engine::RosieEngine::new(None).unwrap();
 /// let mut message = RosieMessage::empty();
 /// engine.compile("invalid pattern", Some(&mut message));
-/// println!("{}", message.as_str());
+/// println!("{}", message);
 /// ```
 #[derive(Debug)]
 pub struct RosieMessage(RosieString<'static>);
@@ -217,6 +211,12 @@ impl RosieMessage {
     }
 }
 
+impl Display for RosieMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// The interface to top-level rosie functionality
 pub struct Rosie ();
 
@@ -227,7 +227,7 @@ impl Rosie {
     /// 
     /// Compiled patterns are managed automatically using a least-recently-used cache and are recompiled as needed.
     /// 
-    /// NOTE: This function may return several different return types, including [bool], [String], and [MatchResult].
+    /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
     /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input, T>(expression : &str, input : &'input str) -> T 
@@ -265,13 +265,13 @@ impl Rosie {
     /// 
     /// The expression may be either the name of a previously loaded `rpl` pattern, or it may be a raw `rpl` expression.
     /// 
-    /// **NOTE**: This function is high-level.  If you want more control, performance, or feedback, see [RosieEngine::compile].
+    /// **NOTE**: This method is high-level.  If you want more control, performance, or feedback, see [RosieEngine::compile].
     /// 
-    /// - This function automatically evaluates the expression for dependencies and automatically loads any dependencies it
+    /// - This method automatically evaluates the expression for dependencies and automatically loads any dependencies it
     /// finds, while RosieEngine::compile skips the dependency analysis
-    /// - This function's returned `Pattern` will be hosted by the thread's default engine.  RosieEngine::compile allows you
+    /// - This method's returned `Pattern` will be hosted by the thread's default engine.  RosieEngine::compile allows you
     /// to host the Pattern on another engine
-    /// - This function doesn't provide any compile warnings or errors.  To debug a compilation failure, call
+    /// - This method doesn't provide any compile warnings or errors.  To debug a compilation failure, call
     /// RosieEngine::compile
     /// 
     /// # Examples
@@ -438,7 +438,7 @@ impl Pattern {
     /// 
     /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
     /// 
-    /// NOTE: This function may return several different return types, including [bool], [String], and [MatchResult].
+    /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
     /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input, T>(&self, input : &'input str) -> Result<T, RosieError> 
@@ -528,7 +528,7 @@ impl MaybeOwnedString<'_> {
     }
 }
 
-/// Represents the results of a match operation, performed by [Pattern::match_str]
+/// Represents the results of a match operation, performed by [Pattern::match_str] or [Rosie::match_str]
 /// 
 //**TODO** I feel like a more caller-friendly interface is possible; i.e. the ability to specify sub-patterns with a "path"
 #[derive(Debug)]
@@ -542,7 +542,7 @@ pub struct MatchResult<'a> {
 
 impl <'a>MatchResult<'a> {
 
-    //This function is a port from the python code here: https://gitlab.com/rosie-community/clients/python/-/blob/master/rosie/decode.py
+    //This method is a port from the python code here: https://gitlab.com/rosie-community/clients/python/-/blob/master/rosie/decode.py
     fn from_bytes_buffer<'input>(input : &'input str, match_buffer : &mut &[u8], existing_start_pos : Option<usize>) -> MatchResult<'input> {
 
         //If we received a start position, it is because we are in the middle of a recursive call stack
@@ -675,7 +675,7 @@ impl <'a>MatchResult<'a> {
     pub fn sub_pat_count(&self) -> usize {
         self.subs.len()
     }
-    /// Returns an [Iterator] over all of the sub-patterns withing this matched pattern
+    /// Returns an [Iterator] over all of the sub-patterns within this matched pattern
     pub fn sub_pat_iter(&self) -> impl Iterator<Item=&MatchResult> {
         self.subs.iter()
     }
@@ -808,7 +808,7 @@ mod tests {
         let match_result : MatchResult = pat.match_str("99").unwrap();
         assert_eq!(match_result.did_match(), false);
 
-        //Test the trace function, and make sure we get a reasonable result
+        //Test the trace method, and make sure we get a reasonable result
         let mut trace = RosieMessage::empty();
         assert!(pat.trace(1, "21", TraceFormat::Condensed, &mut trace).is_ok());
         assert!(trace.as_str().len() > 0);
