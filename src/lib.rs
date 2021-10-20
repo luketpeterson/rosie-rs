@@ -21,7 +21,7 @@
 //! ## Deployment
 //! 
 //! Rosie depends on a `rosie_home` directory, containing support files including the Standard Pattern Library. See the
-//! `Deployment` section of the [rosie_sys] crate's `README` for deployment instructions.
+//! `Installation & Deployment` section of the [rosie_sys] crate's `README` for deployment instructions.
 //! 
 //! ## Usage
 //! 
