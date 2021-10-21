@@ -26,7 +26,7 @@ There are 3 levels of depth at which you may access Rosie.
 ### High-Level: With `Rosie::match_str()`
 
 Just one-line to check for a match
-```
+```rust
 use rosie::*;
 
 if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
@@ -34,7 +34,7 @@ if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
 }
 ```
 Or to get the matched substring
-```
+```rust
 # use rosie::*;
 let result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
 println!("Matched Substring = {}", result.matched_str());
@@ -45,7 +45,7 @@ assert_eq!(result.matched_str(), "Nov 5, 1955");
 
 Explicit compilation reduces overhead because you can manage compiled patterns yourself, dropping the patterns you don't need
 and avoiding unnecessary recompilation.
-```
+```rust
 use rosie::*;
 
 let date_pat = Rosie::compile("date.us_long").unwrap();
