@@ -910,11 +910,11 @@ Q-05.10: <<<<----OPEN---->>>> Callback to support fuzzy matching.  As we discuss
 
 Section 6, Misc
 
-Q-06.01: Do you know anybody who might be interested testing out / fixing the Rust crate on Windows?  I have been
+Q-06.01: <<<<----OPEN---->>>> Do you know anybody who might be interested testing out / fixing the Rust crate on Windows?  I have been
     developing on Mac OS & Linux, and can confirm both work as expected, but I don't have access to a Windows development
     machine.
 
-Q-06.02: This is not related to Rust, but rather a question about the philosophy of the standard pattern library.  Does
+Q-06.02: <<<<----OPEN---->>>> This is not related to Rust, but rather a question about the philosophy of the standard pattern library.  Does
     the standard pattern library exist within a narrow purview to match formats as they are precisely specified,
     i.e. defined patterns, for example rfc2822 for date formatting.
     Or does the standard pattern library have room for patterns that are "The kind of thing a person might type when
@@ -924,13 +924,13 @@ Q-06.02: This is not related to Rust, but rather a question about the philosophy
     For example, it would be nice if "date.any" could sucessfully match: "Sat., Nov. 5, 1955", or if "time.any" would
     match "3:20am GMT" but then where to draw the line?
 
-Q-06.03: The https://rosie-lang.org/ website would really benefit from having the RPL reference linked directly from the
+Q-06.03: <<<<----OPEN---->>>> The https://rosie-lang.org/ website would really benefit from having the RPL reference linked directly from the
     sidebar, and having some simple "getting started" examples on the "examples" landing page, rather than links to find
     the examples elsewhere.  I think this thread summarizes many people's unfortunate first impressions when approaching
-    Rosie: "https://news.ycombinator.com/item?id=21145755".  On the upside, it would be an easy thing to fix these
+    Rosie: "https://news.ycombinator.com/item?id=21145755".  On the upside, it would hopefully be an easy thing to fix these
     minor marketing / communication problems.
 
-Q-06.04: The Rosie logo, hosted at https://rosie-lang.org/images/rosie-circle-blog.png sits within a frame of transparent
+Q-06.04: <<<<----OPEN---->>>> The Rosie logo, hosted at https://rosie-lang.org/images/rosie-circle-blog.png sits within a frame of transparent
     border pixels.  This is apparently a good style choice for the Rosie website where the logo is displayed, however,
     the rust documentation anticipates a logo that fills the entire image.
 
