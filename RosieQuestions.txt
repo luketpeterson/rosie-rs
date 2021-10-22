@@ -921,8 +921,8 @@ Q-06.02: This is not related to Rust, but rather a question about the philosophy
     attempting to represent a certain kind of value."  i.e. inherrently subjective patterns.
     I wrestled with this question when I wrote the currency.rpl package. And it seems like a philosophical judgement call,
     balancing convenience against potential ambiguity.
-    For example, it would be nice if "date.any" could sucessfully match: "Sat., Nov. 5, 1955", but then where to draw
-    the line?
+    For example, it would be nice if "date.any" could sucessfully match: "Sat., Nov. 5, 1955", or if "time.any" would
+    match "3:20am GMT" but then where to draw the line?
 
 Q-06.03: The https://rosie-lang.org/ website would really benefit from having the RPL reference linked directly from the
     sidebar, and having some simple "getting started" examples on the "examples" landing page, rather than links to find

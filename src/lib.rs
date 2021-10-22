@@ -724,9 +724,9 @@ mod tests {
         //Recompile a pattern expression and match it against a matching input using match_pattern_raw
         let mut pat = engine.compile("{[012][0-9]}", None).unwrap();
         let raw_match_result = pat.match_raw(1, "21", &MatchEncoder::Bool).unwrap();
-        //Validate that we can't access the engine while our raw_match_result is in use.
+        //Validate that we can't access the pattern while our raw_match_result is in use.
         //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
-        // assert!(engine.config_as_json().is_ok());
+        // assert!(!pat.match_str::<bool>("35").unwrap());
         assert_eq!(raw_match_result.did_match(), true);
         assert!(raw_match_result.time_elapsed_matching() <= raw_match_result.time_elapsed_total()); //A little lame as tests go, but validates they are called at least.
 
@@ -762,6 +762,8 @@ mod tests {
         assert_eq!(pkg_name.as_str(), "net");
 
         //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
+        // Or if "time.any" would match "3:20am GMT".  Not that I'm interested in those strings specifically, but that it would be nice if there were
+        // patterns to cover common permutations in how people express conceptual entities
 
         //Test matching a pattern with some recursive sub-patterns
         let mut date_pat = engine.compile("date.us_long", None).unwrap();
