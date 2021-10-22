@@ -1,7 +1,7 @@
 #![crate_name = "rosie"]
 
 #![doc(html_logo_url = "https://rosie-lang.org/images/rosie-circle-blog.png")]
-//GOAT, Question for Jamie, can she host a version of this logo that doesn't have a border?  i.e. just the circle occupying the whole frame, with an alpha-channel so the corners are transparent
+//Q-06.04, Can Jamie host a version of this logo that doesn't have a border?  i.e. just the circle occupying the whole frame, with an alpha-channel so the corners are transparent
 
 #![doc = include_str!("../README.md")]
 
@@ -685,14 +685,6 @@ mod tests {
         let new_pat = Rosie::compile("{ [H][^]* }").unwrap();
         assert!(pat.match_str::<bool>("Hello, Rosie!").unwrap());
         assert!(new_pat.match_str::<bool>("Hello, Rosie!").unwrap());
-
-
-// //GOAT: QUESTION FOR JAMIE.  Why is this trace so uninformative compared to the trace of just "date.any"
-// let mut trace = RosieMessage::empty();
-// let pat = Rosie::compile("find:date.any").unwrap();
-// pat.trace(1, "Of course! Nov 5, 1955! That was the day", TraceFormat::Full, &mut trace);
-// println!("Trace = {}", trace.as_str());
-
     }
 
     #[test]

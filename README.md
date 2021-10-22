@@ -35,7 +35,8 @@ if Rosie::match_str("{ [H][^]* }", "Hello, Rosie!") {
 ```
 Or to get the matched substring
 ```rust
-# use rosie::*;
+use rosie::*;
+
 let result : MatchResult = Rosie::match_str("date.any", "Nov 5, 1955! That was the day");
 println!("Matched Substring = {}", result.matched_str());
 assert_eq!(result.matched_str(), "Nov 5, 1955");
