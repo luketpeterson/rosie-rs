@@ -1,9 +1,7 @@
-cargo-features = ["edition2021"]
-
 [package]
 name = "rosie"
 version = "0.1.0"
-edition = "2021"
+edition = "2018"
 authors = ["Luke Peterson <luke@infoplatter.com>"]
 license = "MIT OR Apache-2.0"
 description = "Interface for the Rosie Pattern Language, for efficient and maintainable text pattern matching and search"
