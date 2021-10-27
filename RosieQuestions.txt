@@ -924,6 +924,12 @@ Q-06.02: <<<<----OPEN---->>>> This is not related to Rust, but rather a question
     For example, it would be nice if "date.any" could sucessfully match: "Sat., Nov. 5, 1955", or if "time.any" would
     match "3:20am GMT" but then where to draw the line?
 
+    Jamie said (2021-10-26, Luke paraphrasing verbal conversation recalled from memory):
+        - There are two separate use cases, one for validating input against rigid standards, and the other for matching "anything
+        that looks like a X", e.g. looks like a date, or looks like a time.
+        - The current Standard Pattern Library is targeted at the first, but there is a need for patterns for the second use case.
+        - Jamie will consider the appropriate pattern naming and rpl file organization.
+
 Q-06.03: <<<<----OPEN---->>>> The https://rosie-lang.org/ website would really benefit from having the RPL reference linked directly from the
     sidebar, and having some simple "getting started" examples on the "examples" landing page, rather than links to find
     the examples elsewhere.  I think this thread summarizes many people's unfortunate first impressions when approaching

@@ -35,13 +35,13 @@ use sys_wrapper::{*};
 //Public re-exports
 mod sys_shadow; //Shadow implementations of things from rosie_sys::
 pub use sys_shadow::RosieError; //pub use rosie_sys::RosieError;
-/// An Encoder module used to format the results, when using [Pattern::match_raw]
+/// An Encoder module used to format the results, when using [Pattern::raw_match]
 pub use rosie_sys::MatchEncoder;
-/// A structure containing the match results from a [Pattern::match_raw] call.
+/// A structure containing the match results from a [Pattern::raw_match] call.
 /// 
 /// **NOTE**: A RawMatchResult points to memory inside the engine that is associated with the pattern, therefore you may
 /// not perform any additional matching with that pattern until the RawMatchResult has been released.  This is enforced with
-/// borrowing semantics [Pattern::match_raw].
+/// borrowing semantics [Pattern::raw_match].
 pub use rosie_sys::RawMatchResult;
 /// A format for debugging output, to be used with [Pattern::trace]
 pub use rosie_sys::TraceFormat;
@@ -281,7 +281,7 @@ pub trait MatchOutput<'a> : Sized {
 
 impl MatchOutput<'_> for bool {
     fn match_str(pat : &Pattern, input : &str) -> Result<Self, RosieError> {
-        //NOTE: we're calling directly into the engine because we want to bypass the requirement for a &mut self in Pattern::match_raw.
+        //NOTE: we're calling directly into the engine because we want to bypass the requirement for a &mut self in Pattern::raw_match.
         // That &mut is just there to ensure we have an exclusive borrow, so subsequent calls don't match the same compiled pattern and
         // collide with the pattern's buffer in the engine.
         let raw_match_result = pat.engine.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
@@ -421,11 +421,11 @@ impl Pattern {
     /// }
     /// 
     /// let mut date_pat = Rosie::compile("date.any").unwrap();
-    /// let raw_result = date_pat.match_raw(1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
+    /// let raw_result = date_pat.raw_match(1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
     /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
     /// ```
     /// 
-    pub fn match_raw<'pat>(&'pat mut self, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'pat>, RosieError> {
+    pub fn raw_match<'pat>(&'pat mut self, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'pat>, RosieError> {
         self.engine.match_pattern_raw(self.id, start, input, encoder)
     }
 
@@ -723,7 +723,7 @@ mod tests {
 
         //Recompile a pattern expression and match it against a matching input using match_pattern_raw
         let mut pat = engine.compile("{[012][0-9]}", None).unwrap();
-        let raw_match_result = pat.match_raw(1, "21", &MatchEncoder::Bool).unwrap();
+        let raw_match_result = pat.raw_match(1, "21", &MatchEncoder::Bool).unwrap();
         //Validate that we can't access the pattern while our raw_match_result is in use.
         //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
         // assert!(!pat.match_str::<bool>("35").unwrap());
@@ -783,8 +783,8 @@ mod tests {
         //Also test the JSONPretty encoder while we're at it
         engine.load_expression_deps("time.any", None).unwrap();
         let mut time_pat = engine.compile("time.any", None).unwrap();
-        let date_raw_match_result = date_pat.match_raw(1, "Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
-        let time_raw_match_result = time_pat.match_raw(1, "2:21 am", &MatchEncoder::JSONPretty).unwrap();
+        let date_raw_match_result = date_pat.raw_match(1, "Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
+        let time_raw_match_result = time_pat.raw_match(1, "2:21 am", &MatchEncoder::JSONPretty).unwrap();
         assert!(date_raw_match_result.as_str() != time_raw_match_result.as_str());
         //NOTE: I know these checks might break with perfectly legal changes to JSON formatting, but at least they
         // will flag it, so a human can take a look and ensure something more fundamental didn't break.
@@ -807,7 +807,7 @@ mod tests {
 
                 let mut rng = Pcg64::seed_from_u64(thread_idx.try_into().unwrap()); //non-cryptographic random used for repeatability
 
-                for _ in 0..NUM_ITERATIONS{
+                for _ in 0..NUM_ITERATIONS {
 
                     let pat_idx : u8 = rng.gen_range(0..2);
                     let pat_expr = match pat_idx {
