@@ -190,7 +190,7 @@ impl Rosie {
                 }
 
                 //And compile the expression
-                locals.engine.load_expression_deps(expression, None).unwrap();
+                locals.engine.import_expression_deps(expression, None).unwrap();
                 locals.engine.compile(expression, None).unwrap()
             };
 
@@ -233,7 +233,7 @@ impl Rosie {
             //TODO: Get rid of UnsafeCell.  See note near declaration of THREAD_LOCALS.
             let locals : &ThreadLocals = unsafe{ &*locals_cell.get() };
 
-            locals.engine.load_expression_deps(expression, None)?;
+            locals.engine.import_expression_deps(expression, None)?;
             locals.engine.compile(expression, None)
         })
     }
@@ -719,7 +719,17 @@ mod tests {
         let compile_result = engine.compile("year = bogus", Some(&mut message));
         assert!(compile_result.is_err());
         assert!(message.len() > 0);
-        //println!("{}", message.as_str());
+        //println!("Compile Error: {}", message.as_str());
+
+        //Try and import the dependencies for an invalid pattern, and check the error message
+        let mut message = RosieMessage::empty();
+        let import_result = engine.import_expression_deps("invalid.any", Some(&mut message));
+        assert!(import_result.is_err());
+        assert!(message.len() > 0);
+        //println!("Import Error: {}", message.as_str());
+
+        //Load the dependencies for a valid pattern
+        engine.import_expression_deps("time.any", None).unwrap();
 
         //Recompile a pattern expression and match it against a matching input using match_pattern_raw
         let mut pat = engine.compile("{[012][0-9]}", None).unwrap();
@@ -781,7 +791,7 @@ mod tests {
 
         //Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
         //Also test the JSONPretty encoder while we're at it
-        engine.load_expression_deps("time.any", None).unwrap();
+        engine.import_expression_deps("time.any", None).unwrap();
         let mut time_pat = engine.compile("time.any", None).unwrap();
         let date_raw_match_result = date_pat.raw_match(1, "Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
         let time_raw_match_result = time_pat.raw_match(1, "2:21 am", &MatchEncoder::JSONPretty).unwrap();
@@ -809,7 +819,7 @@ mod tests {
 
                 for _ in 0..NUM_ITERATIONS {
 
-                    let pat_idx : u8 = rng.gen_range(0..2);
+                    let pat_idx : u8 = rng.gen_range(0..3);
                     let pat_expr = match pat_idx {
                         0 => "{ [H][^]* }",
                         1 => "date.any",
@@ -821,7 +831,7 @@ mod tests {
 
                     for _ in 0..NUM_MATCHES {
 
-                        let str_idx : u8 = rng.gen_range(0..2);
+                        let str_idx : u8 = rng.gen_range(0..3);
                         let str_val = match str_idx {
                             0 => "Hello, Rosie!",
                             1 => "Saturday, Nov 5, 1955",

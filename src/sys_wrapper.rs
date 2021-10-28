@@ -28,7 +28,8 @@ use rosie_sys::{
     rosie_loadfile,
     rosie_import,
     //rosie_expression_refs,
-    rosie_expression_deps,
+    //rosie_expression_deps,
+    rosie_import_expression_deps
 };
 use crate::sys_shadow::{*};
 use crate::{*};
@@ -180,7 +181,7 @@ impl RosieEngine {
     /// Compiles the specified expression into a `Pattern` hosted by the `Engine`.
     /// 
     /// This is a lower-level interface than [Rosie::compile].  Expression dependencies must be manually imported using
-    /// any of [load_expression_deps](RosieEngine::load_expression_deps), [RosieEngine::load_pkg_from_str],
+    /// any of [import_expression_deps](RosieEngine::import_expression_deps), [RosieEngine::load_pkg_from_str],
     /// [RosieEngine::load_pkg_from_file], or [RosieEngine::import_pkg].
     /// 
     /// # Examples
@@ -217,7 +218,7 @@ impl RosieEngine {
                     id : pat_idx    
                 })
             } else {
-                Err(RosieError::PatternError)
+                Err(RosieError::ExpressionError)
             }
         } else {
             Err(RosieError::from(result_code))
@@ -226,56 +227,29 @@ impl RosieEngine {
 
     /// Parses an rpl expression and loads any dependencies 
     ///
-    //TODO: It actually bugs me greatly that we need serde as a dependency in release mode, and even more so that we have
-    // to go through JSON to get expression dependencies out of rosie.  Maybe this can be improved in the future, but 
-    // realistically it's not a serious problem.
-    //
     //INTERNAL NOTE: The call performs internal mutation on the engine, but it's safe because the mutated components can't
     // be referenced. See note on `RosieEngine::compile()`
-    pub fn load_expression_deps(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<(), RosieError> {
+    pub fn import_expression_deps(&self, expression : &str, messages : Option<&mut RosieMessage>) -> Result<(), RosieError> {
 
-        let mut deps_buf = RosieString::empty();
         let mut message_buf = RosieString::empty();
+        let mut err : i32 = 0;
         let expression_rosie_string = RosieString::from_str(expression);
 
-        //Parse the expression to extract any dependencies
-        let result_code = unsafe { rosie_expression_deps(self.ptr(), &expression_rosie_string, &mut deps_buf, &mut message_buf) };
+        let result_code = unsafe { rosie_import_expression_deps(self.ptr(), &expression_rosie_string, ptr::null_mut(), &mut err, &mut message_buf) };
 
-        let mut result_messages = messages;
-        if let Some(result_messages) = &mut result_messages {
-            result_messages.0.manual_drop(); //We're overwriting the string that was there
-            result_messages.0 = message_buf;
+        if let Some(result_message) = messages {
+            result_message.0.manual_drop(); //We're overwriting the string that was there
+            result_message.0 = message_buf;
         } else {
             message_buf.manual_drop();
         }
 
-        //If we got the deps as a JSON string from librosie, get ready to parse it
         if result_code == 0 {
-
-            //If there are no deps, we get back an empty string rather than an array
-            if deps_buf.len() > 2 {
-                let parsed_deps : Vec<&str> = serde_json::from_slice(deps_buf.as_bytes()).unwrap();
-    
-                //Loop over each dep and load it
-                for dep in parsed_deps {
-
-                    let mut temp_messages = RosieMessage::empty();
-                    let result = self.import_pkg(dep, None, Some(&mut temp_messages));
-
-                    if let Err(err) = result {
-                        deps_buf.manual_drop();
-
-                        if let Some(result_messages) = result_messages {
-                            *result_messages = temp_messages;
-                        }
-
-                        return Err(err);
-                    }
-                }    
+            if err == 0 {
+                Ok(())
+            } else {
+                Err(RosieError::from(err)) //NOTE: we count on the Lua function to return the numeric value for either RosieError::ExpressionError or RosieError::PackageError
             }
-
-            deps_buf.manual_drop();
-            Ok(())
         } else {
             Err(RosieError::from(result_code))
         }

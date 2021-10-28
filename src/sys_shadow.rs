@@ -22,7 +22,7 @@ pub enum RosieError {
     /// A failure occurred in the `librosie` engine.
     EngineCallFailed = -4,
     /// An error related to a pattern input has occurred, for example, an `rpl` syntax error.
-    PatternError = -1001,
+    ExpressionError = -1001,
     /// An error related to a package input has occurred, for example a missing package or `.rpl` file,
     /// a missing package declaration in the file, or another syntax error in the package.rpl file.
     PackageError = -1002,
@@ -37,6 +37,9 @@ impl RosieError {
             -2 => RosieError::OutOfMemory,
             -3 => RosieError::SysCallFailed,
             -4 => RosieError::EngineCallFailed,
+            -1001 => RosieError::ExpressionError,
+            -1002 => RosieError::PackageError,
+            -1003 => RosieError::ArgError,
             _ => RosieError::MiscErr
         }
     }

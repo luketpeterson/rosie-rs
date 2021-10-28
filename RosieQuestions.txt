@@ -707,13 +707,18 @@ Q-03.10: <<<<----OPEN---->>>> The `trace` output appears to be substantially les
         pat.trace(1, "Nov 5, 1955! That was the day", TraceFormat::Full, &mut trace).unwrap();
         println!("Trace = {}", trace.as_str());
 
-Q-03.11: <<<<----OPEN---->>>> The Rosie CLI loads the dependencies of an expression prior to compiling it, and I wanted to
-    offer this convenience also, so I implemented `RosieEngine::load_expression_deps` to be used by the higher-level calls.
+Q-03.11: <<<<----CLOSED, Fixed---->>>> The Rosie CLI loads the dependencies of an expression prior to compiling it, and I wanted to
+    offer this convenience also, so I implemented `RosieEngine::import_expression_deps` to be used by the higher-level calls.
     In the CLI, it appears that the code to do this is driven primarily from Lua.  Currently, my Rust code calls
     `rosie_expression_deps` which then jumps into Lua, ends up parsing the expression and evaluating the dependencies,
     putting that info into a Lua table, encoding that table as JSON, passing it back to Rust, and then I parse the JSON,
     and finally call `import_pkg` on each result.  What I'm getting at is: it seems like it would be better if librosie
     exposed a `rosie_syntax_op` to just call the same Lua routine as the CLI.
+
+    Luke said (2021-10-27):
+        I added `rosie_import_expression_deps()` to librosie, which calls into the Lua function, `import_expression_deps` in
+        engine_module.lua. That function is mostly code cribbed straight out of the local function `import_dependencies` in
+        cli-common.lua.
 
 Section 4, Rust-level API Aesthetics & Documentation Questions
 
