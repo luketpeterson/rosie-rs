@@ -78,31 +78,66 @@ impl RosieEngine {
             Err(RosieError::MiscErr)
         }
     }
-    /// Returns the file-system path to the directory containing the standard pattern library used by the RosieEngine.
-    pub fn lib_path(&self) -> Result<&Path, RosieError> {
+    /// Returns the file-system paths to the directories containing the standard pattern library files used by the RosieEngine.
+    pub fn lib_paths(&self) -> Result<Vec<PathBuf>, RosieError> {
 
-        let mut path_rosie_string = RosieString::empty();
+        let mut paths_rosie_string = RosieString::empty();
         
-        let result_code = unsafe { rosie_libpath(self.ptr(), &mut path_rosie_string) };
+        let result_code = unsafe { rosie_libpath(self.ptr(), &mut paths_rosie_string) };
 
         if result_code == 0 {
+
+            let mut return_vec = vec![];
+
             //WARNING: Different OSs use different encodings for file paths.  Also there is no guarantee that file system paths
-            // will be valid unicode (as Rust's str & String require).  There is a chance this will fail on some OSs.
-            Ok(Path::new(path_rosie_string.into_str()))
+            // will be valid unicode (as Rust's str & String require).  There is a chance this will panic on some OSs when we
+            // call into_str().
+
+            //TODO: It's a near-certainty that this is going to break on Windows because paths routinely have ':' as part
+            //of the path itself, given ':' is the drive specifier character
+            for path_str in paths_rosie_string.into_str().split(":") {
+                return_vec.push(PathBuf::from(path_str));
+            }
+
+            Ok(return_vec)
         } else {
             Err(RosieError::from(result_code))
         }
     }
-    /// Sets the directory to use when loading packages from the standard pattern library.
+    /// Sets the directories to use when loading packages from the standard pattern library.
     /// 
-    /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as any other operations that load rpl code using the `import` directive.
-    pub fn set_lib_path<P: AsRef<Path>>(&mut self, new_path : P) -> Result<(), RosieError> {
+    /// This will affect the behavior of [import_pkg](RosieEngine::import_pkg), as well as [Rosie::compile]
+    /// and any other operations that load rpl code using the `import` directive.
+    /// 
+    /// NOTE: supplied paths are not validated by this function and invalid paths will be silently accepted.
+    /// 
+    /// Example: Adding an additional rpl directory path
+    /// ```
+    /// # use rosie::*; 
+    /// # use std::path::PathBuf;
+    /// let mut engine = engine::RosieEngine::new(None).unwrap();
+    /// let mut lib_paths = engine.lib_paths().unwrap();
+    /// lib_paths.push(PathBuf::from("/tmp/temporary_rpl_dir/"));
+    /// engine.set_lib_paths(&lib_paths).unwrap();
+    /// ```
+    pub fn set_lib_paths<P: AsRef<Path>>(&mut self, new_paths : &[P]) -> Result<(), RosieError> {
 
         //WARNING: Different OSs use different encodings for file paths.  Also there is no guarantee that file system paths
-        // will be valid unicode (as Rust's str & String require).  There is a chance this will fail on some OSs.
-        let mut path_rosie_string = RosieString::from_str(new_path.as_ref().to_str().unwrap());
+        // will be valid unicode (as Rust's str & String require).  There is a chance this will panic on some OSs when 
+        // we try and make paths into Strings
 
-        //Q-03.09.A QUESTION FOR A ROSIE EXPERT: Can this function set multiple paths?  If so, how do I clear them?
+        let mut new_paths_iter = new_paths.into_iter();
+        let mut new_paths_string = if let Some(first_path) = new_paths_iter.next() {
+            first_path.as_ref().to_str().unwrap().to_string()
+        } else {
+            "".to_string()
+        };
+        for new_path in new_paths_iter {
+            new_paths_string.push_str(":");
+            new_paths_string.push_str(new_path.as_ref().to_str().unwrap());
+        }
+
+        let mut path_rosie_string = RosieString::from_str(&new_paths_string);
         
         let result_code = unsafe { rosie_libpath(self.ptr(), &mut path_rosie_string) };
 

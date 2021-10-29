@@ -697,11 +697,22 @@ mod tests {
         //Make sure we can get the engine config
         let _ = engine.config_as_json().unwrap();
 
-        //Check that we can get the library path, and then set it, if needed
-        let lib_path = engine.lib_path().unwrap();
-        println!("lib_path = {}", lib_path.display());
-        let new_lib_path = lib_path.to_path_buf(); //We copy the Path, so we can drop the one that's borrowed from the engine in order to mutate the engine safely
-        engine.set_lib_path(new_lib_path).unwrap();
+        //Check that we can get the library path, and then append a new path to it
+        let mut lib_paths = engine.lib_paths().unwrap();
+        //println!("lib_paths[0] = {}", lib_paths[0].display());
+
+        //Now append a new path to it
+        let new_rpl_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_rpl");
+        lib_paths.push(new_rpl_dir);
+        engine.set_lib_paths(&lib_paths).unwrap();
+
+        //Make sure we can read it back and see the path we added, in addition to the original
+        let lib_paths = engine.lib_paths().unwrap();
+        assert_eq!(lib_paths.len(), 2);
+        assert!(lib_paths.contains(&Path::new(env!("CARGO_MANIFEST_DIR")).join("test_rpl")));
+
+        //Validate we can find packages in the new directory
+        engine.import_expression_deps("rust_test_1.c_vegetables", None).unwrap();
 
         //Check the alloc limit, set it to unlimited, check the usage
         let _ = engine.mem_alloc_limit().unwrap();
@@ -763,31 +774,34 @@ mod tests {
         assert_eq!(pkg_name.as_str(), "two_digit_year");
 
         //Test loading a package from a file
-        let rpl_file = Path::new(engine.lib_path().unwrap()).join("date.rpl");
+        let rpl_file = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_rpl").join("rust_test_2.rpl");
         let pkg_name = engine.load_pkg_from_file(rpl_file.to_str().unwrap(), None).unwrap();
-        assert_eq!(pkg_name.as_str(), "date");
+        assert_eq!(pkg_name.as_str(), "rust_test_2");
 
         //Test importing a package
         let pkg_name = engine.import_pkg("net", None, None).unwrap();
         assert_eq!(pkg_name.as_str(), "net");
 
-        //Q-06.02 QUESTION ROSIE FEATURE REQUEST.  It would be nice if one of the "date.any" patterns could sucessfully match: "Sat., Nov. 5, 1955"
-        // Or if "time.any" would match "3:20am GMT".  Not that I'm interested in those strings specifically, but that it would be nice if there were
-        // patterns to cover common permutations in how people express conceptual entities
-
         //Test matching a pattern with some recursive sub-patterns
+        engine.import_pkg("date", None, None).unwrap();
         let mut date_pat = engine.compile("date.us_long", None).unwrap();
         let match_result : MatchResult = date_pat.match_str("Saturday, Nov 5, 1955").unwrap();
-        assert_eq!(match_result.pat_name_str(), "us_long");
+        assert_eq!(match_result.pat_name_str(), "date.us_long");
         assert_eq!(match_result.matched_str(), "Saturday, Nov 5, 1955");
         assert_eq!(match_result.start(), 1);
         assert_eq!(match_result.end(), 22);
         assert_eq!(match_result.sub_pat_count(), 4);
         let sub_match_pat_names : Vec<&str> = match_result.sub_pat_iter().map(|result| result.pat_name_str()).collect();
-        assert!(sub_match_pat_names.contains(&"day_name"));
-        assert!(sub_match_pat_names.contains(&"month_name"));
-        assert!(sub_match_pat_names.contains(&"day"));
-        assert!(sub_match_pat_names.contains(&"year"));
+        assert!(sub_match_pat_names.contains(&"date.day_name"));
+        assert!(sub_match_pat_names.contains(&"date.month_name"));
+        assert!(sub_match_pat_names.contains(&"date.day"));
+        assert!(sub_match_pat_names.contains(&"date.year"));
+        let sub_result = match_result.sub_pat_iter().find(|sub_result| sub_result.pat_name_str() == "date.month_name").unwrap();
+        assert_eq!(sub_result.matched_str(), "Nov");
+        assert_eq!(sub_result.start(), 11);
+        assert_eq!(sub_result.end(), 14);
+
+//GOAT, investigate inconsistencies in pat_name_str depending how a package is loaded.  It seems the package name isn't part of the pattern if the package is loaded from a file directly.
 
         //Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
         //Also test the JSONPretty encoder while we're at it
@@ -798,7 +812,7 @@ mod tests {
         assert!(date_raw_match_result.as_str() != time_raw_match_result.as_str());
         //NOTE: I know these checks might break with perfectly legal changes to JSON formatting, but at least they
         // will flag it, so a human can take a look and ensure something more fundamental didn't break.
-        assert_eq!(date_raw_match_result.as_str().len(), 625);
+        assert_eq!(date_raw_match_result.as_str().len(), 660);
         assert_eq!(time_raw_match_result.as_str().len(), 453);
     }
 

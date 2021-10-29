@@ -1,0 +1,13 @@
+---- -*- Mode: rpl; -*-                                                                             
+---- vim:syn=rosie
+----
+---- rust_test_1.rpl    patterns used testing the rust rosie crate
+---- © Copyright Luke Peterson, 2021
+---- LICENSE: MIT License (https://opensource.org/licenses/mit-license.html)
+---- AUTHORS: Luke Peterson, luketpeterson at gmail dot com
+
+rpl 1.2
+
+package rust_test_1
+
+c_vegetables = "cabbage" / "carrot" / "cauliflower" / "celery" / "chard" / "collards" / "corn" / "cucumber"

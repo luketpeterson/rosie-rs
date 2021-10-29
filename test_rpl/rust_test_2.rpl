@@ -1,0 +1,13 @@
+---- -*- Mode: rpl; -*-                                                                             
+---- vim:syn=rosie
+----
+---- rust_test_2.rpl    patterns used testing the rust rosie crate
+---- © Copyright Luke Peterson, 2021
+---- LICENSE: MIT License (https://opensource.org/licenses/mit-license.html)
+---- AUTHORS: Luke Peterson, luketpeterson at gmail dot com
+
+rpl 1.2
+
+package rust_test_2
+
+b_vegetables = "beans" / "beets" / "bok choy" / "broccoli" / "brussel sprouts"
