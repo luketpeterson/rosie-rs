@@ -509,7 +509,7 @@ Q-03.05: <<<<----CLOSED, Fixed---->>>> What is the intended use-case for the "as
     Luke said:
         Oh, Ok.  I misunderstood.  I've fixed the documentation in the Rust crate.
 
-Q-03.06: <<<<----CLOSED, Fixed---->>>> Along the same lines, why does `rosie_import` set `actual_pkgname` to
+Q-03.06: <<<<----CLOSED, Docs Changed---->>>> Along the same lines, why does `rosie_import` set `actual_pkgname` to
     `pkg_name` in the success case, instead of to `as`?  Or why is this arg is even needed?  I.e. is there a case
     where librosie might create a brand new name, or might sometimes return the `pkgname` and other times return
     `as` depending on some internal logic?
@@ -719,6 +719,26 @@ Q-03.11: <<<<----CLOSED, Fixed---->>>> The Rosie CLI loads the dependencies of a
         I added `rosie_import_expression_deps()` to librosie, which calls into the Lua function, `import_expression_deps` in
         engine_module.lua. That function is mostly code cribbed straight out of the local function `import_dependencies` in
         cli-common.lua.
+
+Q-03.12: <<<<----OPEN---->>>> Package Namespace Path inconsistencies.  Rosie seems to assign a different namespace path to
+    packages depending on how they are loaded.  Is the following descrepency expected?
+
+    ```
+        let mut engine1 = engine::RosieEngine::new(None).unwrap();
+        let mut engine2 = engine::RosieEngine::new(None).unwrap();
+
+        engine1.import_pkg("date", None, None).unwrap();
+        engine2.load_pkg_from_file(engine2.lib_paths().unwrap()[0].join("date.rpl"), None).unwrap();
+        
+        let date_pat1 = engine1.compile("date.us_long", None).unwrap();
+        let date_pat2 = engine2.compile("date.us_long", None).unwrap();
+
+        println!("Imported = {}", date_pat1.match_str::<MatchResult>("Saturday, Nov 5, 1955").unwrap().pat_name_str());
+        println!("Loaded = {}", date_pat2.match_str::<MatchResult>("Saturday, Nov 5, 1955").unwrap().pat_name_str());
+    ```
+
+    This all doesn't quite make sense to me in light of the explanation in Q-03.06.  So it's either a bug or more
+    documentation is needed.
 
 Section 4, Rust-level API Aesthetics & Documentation Questions
 

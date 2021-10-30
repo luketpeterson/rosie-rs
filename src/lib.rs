@@ -147,6 +147,10 @@ impl RosieMessage {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+    /// Same as [as_str](RosieMessage::as_str) but won't panic
+    pub fn try_as_str(&self) -> Option<&str> {
+        self.0.try_as_str()
+    }
     /// Returns the length, in bytes, of the contents of the RosieMessage.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -294,7 +298,7 @@ impl MatchOutput<'_> for bool {
 // implementation forces a copy in every situation.  So we want to accidentally direct people to the slow-path by making it convenient.
 //
 //In a perfect world, I would like there to be an implementation for `&'a str`, but the problem with that is constant-capture patterns
-// point to data that isn't in the input.  I went pretty far into a change that got rid of the MaybeOwnedString inside of MatchResult,
+// point to data that isn't in the input.  I went pretty far into a change that got rid of the MaybeOwnedBytes inside of MatchResult,
 // in order to implement `MatchResult::into_str`, but that meant constant-capture patterns (and therefore all MatchResults) needed to
 // borrow the engine buffer associated with the pattern (like a RawMatchResult does).  This is unworkable because of the pattern cache.
 //
@@ -453,19 +457,21 @@ impl Pattern {
     }
 }
 
-//A variant on maybe_owned::MaybeOwned, except it can either be a String or an &str.
-//TODO: Roll this out into a stand-alone crate
+//A variant on maybe_owned::MaybeOwned, except it can either be a Vec<u8> or an &[u8].
 #[derive(Debug)]
-enum MaybeOwnedString<'a> {
-    Owned(String),
-    Borrowed(&'a str),
+enum MaybeOwnedBytes<'a> {
+    Owned(Vec<u8>),
+    Borrowed(&'a [u8]),
 }
 
-impl MaybeOwnedString<'_> {
-    pub fn as_str(&self) -> &str {
+impl MaybeOwnedBytes<'_> {
+    pub fn try_as_str(&self) -> Option<&str> {
+        str::from_utf8(self.as_bytes()).ok()
+    }
+    pub fn as_bytes(&self) -> &[u8] {
         match self {
-            MaybeOwnedString::Owned(the_string) => the_string.as_str(),
-            MaybeOwnedString::Borrowed(the_str) => the_str
+            MaybeOwnedBytes::Owned(the_vec) => &the_vec[..],
+            MaybeOwnedBytes::Borrowed(the_slice) => the_slice
         }
     }
 }
@@ -478,7 +484,7 @@ pub struct MatchResult<'a> {
     pat_name : String,
     start : usize,
     end : usize,
-    data : MaybeOwnedString<'a>,
+    data : MaybeOwnedBytes<'a>,
     subs : Vec<MatchResult<'a>>
 }
 
@@ -529,10 +535,10 @@ impl <'a>MatchResult<'a> {
 
             let (data_chars, remainder) = match_buffer.split_at(usize::try_from(data_len).unwrap());
             *match_buffer = remainder;
-            MaybeOwnedString::Owned(String::from_utf8(data_chars.to_vec()).unwrap())
+            MaybeOwnedBytes::Owned(data_chars.to_vec())
         } else {
-            let (_, match_data) = input.split_at(start_position-1);
-            MaybeOwnedString::Borrowed(match_data)
+            let (_, match_data) = input.as_bytes().split_at(start_position-1);
+            MaybeOwnedBytes::Borrowed(match_data)
         };
 
         //The empty array for our sub-patterns.
@@ -559,9 +565,9 @@ impl <'a>MatchResult<'a> {
         }
 
         //If we have a borrowed data pointer, cut its length at the appropriate place
-        if let MaybeOwnedString::Borrowed(match_data) = data {
+        if let MaybeOwnedBytes::Borrowed(match_data) = data {
             let (new_data_ref, _) = match_data.split_at(end_position - start_position);
-            data = MaybeOwnedString::Borrowed(new_data_ref);
+            data = MaybeOwnedBytes::Borrowed(new_data_ref);
         }
         
         MatchResult{
@@ -581,7 +587,7 @@ impl <'a>MatchResult<'a> {
             pat_name : "".to_string(),
             start : 0,
             end : 0,
-            data : MaybeOwnedString::Borrowed(""),
+            data : MaybeOwnedBytes::Borrowed(&[]),
             subs : vec![]
         }
     }
@@ -597,9 +603,20 @@ impl <'a>MatchResult<'a> {
     pub fn pat_name_str(&self) -> &str {
         self.pat_name.as_str()
     }
-    /// Returns the subset of the input that was matched by the pattern
+    /// Returns the subset of the input that was matched by the pattern as an &str
+    /// 
+    /// NOTE: This may panic if the matched data includes part but not all of a unicode character.
+    /// Use [try_matched_str] for a non-panicking alternative
     pub fn matched_str(&self) -> &str {
-        self.data.as_str()
+        self.try_matched_str().unwrap()
+    }
+    /// Returns the subset of the input that was matched by the pattern as an &str
+    pub fn try_matched_str(&self) -> Option<&str> {
+        self.data.try_as_str()
+    }
+    /// Returns the subset of the input that was matched by the pattern as an &[u8]
+    pub fn matched_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
     }
     /// Returns the character offset of the beginning of the match, within the input
     /// 
@@ -800,8 +817,6 @@ mod tests {
         assert_eq!(sub_result.matched_str(), "Nov");
         assert_eq!(sub_result.start(), 11);
         assert_eq!(sub_result.end(), 14);
-
-//GOAT, investigate inconsistencies in pat_name_str depending how a package is loaded.  It seems the package name isn't part of the pattern if the package is loaded from a file directly.
 
         //Verify that the RawMatchResults from two different compiled patterns don't interfere with each other
         //Also test the JSONPretty encoder while we're at it
