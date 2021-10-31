@@ -439,8 +439,8 @@ impl RosieEngine {
 pub trait PrivateRosieEngine {
     fn ptr(&self) -> EnginePtr;
     fn clone_private(&self) -> Self;
-    fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError>;
-    fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError>;
+    fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input [u8]) -> Result<MatchResult<'input>, RosieError>;
+    fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &[u8], encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError>;
     fn trace_pattern(&self, pattern_id : i32, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError>;
 }
 
@@ -460,7 +460,7 @@ impl PrivateRosieEngine for RosieEngine {
 
     // Returns a MatchResult, which deserializes the data from the RawMatchResult, so there is no pointer into the
     // engine after the call is complete.  However, the MatchResult contains references into the input string.
-    fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input str) -> Result<MatchResult<'input>, RosieError> {
+    fn match_pattern<'input>(&self, pattern_id : i32, start : usize, input : &'input [u8]) -> Result<MatchResult<'input>, RosieError> {
         
         let raw_match_result = self.match_pattern_raw(pattern_id, start, input, &MatchEncoder::Byte)?;
                 
@@ -472,13 +472,13 @@ impl PrivateRosieEngine for RosieEngine {
     }
 
     // Returns a RawMatchResult, which contains a pointer into the engine that is accociated with the specific pattern_id
-    fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
+    fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &[u8], encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
 
         if start < 1 || start > input.len() {
             return Err(RosieError::ArgError);
         }
 
-        let input_rosie_string = RosieString::from_str(input);
+        let input_rosie_string = RosieString::from_bytes(input);
         let mut match_result = RawMatchResult::empty();
 
         //Calling the rosie_match2 API, so we get our own dedicated results buffer for each pattern

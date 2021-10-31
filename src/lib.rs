@@ -167,7 +167,7 @@ impl Display for RosieMessage {
 pub struct Rosie ();
 
 impl Rosie {
-    /// Matches the specified `expression` in the specified `input` string.
+    /// Matches the specified `expression` in the specified `input` bytes.
     /// 
     /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
     /// 
@@ -176,7 +176,7 @@ impl Rosie {
     /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
     /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
-    pub fn match_str<'input, T>(expression : &str, input : &'input str) -> T 
+    pub fn match_bytes<'input, T>(expression : &str, input : &'input [u8]) -> T 
     where T : MatchOutput<'input> {
         THREAD_LOCALS.with(|locals_cell| {
 
@@ -199,13 +199,26 @@ impl Rosie {
             };
 
             //Call the return-type-specific match call
-            let result = T::match_str(&mut pat, input).unwrap();
+            let result = T::match_bytes(&mut pat, input).unwrap();
 
             //Put the pattern back on the top of the LRU stack
             locals.pattern_cache.insert(expression.to_string(), pat);
 
             result
         })
+    }
+    /// Matches the specified `expression` in the specified `input` str.
+    /// 
+    /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
+    /// 
+    /// Compiled patterns are managed automatically using a least-recently-used cache and are recompiled as needed.
+    /// 
+    /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
+    /// If you need the fastest possible performance calling this method to return a [bool] will use the
+    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
+    pub fn match_str<'input, T>(expression : &str, input : &'input str) -> T 
+    where T : MatchOutput<'input> {
+        Self::match_bytes(expression, input.as_bytes())
     }
     /// Compiles the specified expression, returning a `Pattern` that can then be used to match that expression.
     /// 
@@ -280,11 +293,11 @@ impl Rosie {
 
 /// Implemented for types that can be returned by a match operation
 pub trait MatchOutput<'a> : Sized {
-    fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError>;
+    fn match_bytes(pat : &Pattern, input : &'a [u8]) -> Result<Self, RosieError>;
 }
 
 impl MatchOutput<'_> for bool {
-    fn match_str(pat : &Pattern, input : &str) -> Result<Self, RosieError> {
+    fn match_bytes(pat : &Pattern, input : &[u8]) -> Result<Self, RosieError> {
         //NOTE: we're calling directly into the engine because we want to bypass the requirement for a &mut self in Pattern::raw_match.
         // That &mut is just there to ensure we have an exclusive borrow, so subsequent calls don't match the same compiled pattern and
         // collide with the pattern's buffer in the engine.
@@ -310,7 +323,7 @@ impl MatchOutput<'_> for bool {
 // }
 
 impl <'a>MatchOutput<'a> for MatchResult<'a> {
-    fn match_str(pat : &Pattern, input : &'a str) -> Result<Self, RosieError> {
+    fn match_bytes(pat : &Pattern, input : &'a [u8]) -> Result<Self, RosieError> {
         pat.engine.match_pattern(pat.id, 1, input)
     }
 }
@@ -332,7 +345,7 @@ fn librosie_init<P: AsRef<Path>>(path: Option<P>) {
             Some(PathBuf::from(dir_path.as_ref())) // If we were passed a path, use it.
         } else {
             if let Some(default_path_str) = rosie_home_default() {
-                Some(PathBuf::from(default_path_str)) //We will pass the path compiled into our binary
+                Some(PathBuf::from(str::from_utf8(default_path_str).unwrap())) //We will pass the path compiled into our binary
             } else {
                 None //We will let librosie try to find it
             }
@@ -380,7 +393,20 @@ impl Drop for Pattern {
 
 impl Pattern {
         
-    /// Matches the `Pattern` in the specified `input` string.
+    /// Matches the `Pattern` in the specified `input` bytes string.
+    /// 
+    /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
+    /// 
+    /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
+    /// If you need the fastest possible performance calling this method to return a [bool] will use the
+    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
+    pub fn match_bytes<'input, T>(&self, input : &'input [u8]) -> Result<T, RosieError> 
+    where T : MatchOutput<'input> {
+        //Call the return-type-specific match call
+        T::match_bytes(self, input)
+    }
+    
+    /// Matches the `Pattern` in the specified `input` str.
     /// 
     /// Returns the requested type if a match was found, otherwise returns an appropriate error code.
     /// 
@@ -389,8 +415,7 @@ impl Pattern {
     /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input, T>(&self, input : &'input str) -> Result<T, RosieError> 
     where T : MatchOutput<'input> {
-        //Call the return-type-specific match call
-        T::match_str(self, input)
+        self.match_bytes(input.as_bytes())
     }
 
     /// Matches the `Pattern` in the specified `input` string, beginning from the `start` index, using the specified `encoder`.
@@ -425,11 +450,11 @@ impl Pattern {
     /// }
     /// 
     /// let mut date_pat = Rosie::compile("date.any").unwrap();
-    /// let raw_result = date_pat.raw_match(1, "Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
+    /// let raw_result = date_pat.raw_match(1, b"Sat Nov 5, 1955", &MatchEncoder::JSON).unwrap();
     /// let parsed_result : JSONMatchResult = serde_json::from_slice(raw_result.as_bytes()).unwrap();
     /// ```
     /// 
-    pub fn raw_match<'pat>(&'pat mut self, start : usize, input : &str, encoder : &MatchEncoder) -> Result<RawMatchResult<'pat>, RosieError> {
+    pub fn raw_match<'pat>(&'pat mut self, start : usize, input : &[u8], encoder : &MatchEncoder) -> Result<RawMatchResult<'pat>, RosieError> {
         self.engine.match_pattern_raw(self.id, start, input, encoder)
     }
 
@@ -491,7 +516,7 @@ pub struct MatchResult<'a> {
 impl <'a>MatchResult<'a> {
 
     //This method is a port from the python code here: https://gitlab.com/rosie-community/clients/python/-/blob/master/rosie/decode.py
-    fn from_bytes_buffer<'input>(input : &'input str, match_buffer : &mut &[u8], existing_start_pos : Option<usize>) -> MatchResult<'input> {
+    fn from_bytes_buffer<'input>(input : &'input [u8], match_buffer : &mut &[u8], existing_start_pos : Option<usize>) -> MatchResult<'input> {
 
         //If we received a start position, it is because we are in the middle of a recursive call stack
         let start_position = match existing_start_pos {
@@ -537,7 +562,7 @@ impl <'a>MatchResult<'a> {
             *match_buffer = remainder;
             MaybeOwnedBytes::Owned(data_chars.to_vec())
         } else {
-            let (_, match_data) = input.as_bytes().split_at(start_position-1);
+            let (_, match_data) = input.split_at(start_position-1);
             MaybeOwnedBytes::Borrowed(match_data)
         };
 
@@ -578,7 +603,7 @@ impl <'a>MatchResult<'a> {
             subs : subs
         }
     }
-    fn from_byte_match_result<'input>(input : &'input str, src_result : RawMatchResult) -> MatchResult<'input> {
+    fn from_byte_match_result<'input>(input : &'input [u8], src_result : RawMatchResult) -> MatchResult<'input> {
         let mut data_buf_ref = src_result.as_bytes();
         MatchResult::from_bytes_buffer(input, &mut data_buf_ref, None)
     }
@@ -761,7 +786,7 @@ mod tests {
 
         //Recompile a pattern expression and match it against a matching input using match_pattern_raw
         let mut pat = engine.compile("{[012][0-9]}", None).unwrap();
-        let raw_match_result = pat.raw_match(1, "21", &MatchEncoder::Bool).unwrap();
+        let raw_match_result = pat.raw_match(1, b"21", &MatchEncoder::Bool).unwrap();
         //Validate that we can't access the pattern while our raw_match_result is in use.
         //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
         // assert!(!pat.match_str::<bool>("35").unwrap());
@@ -822,8 +847,8 @@ mod tests {
         //Also test the JSONPretty encoder while we're at it
         engine.import_expression_deps("time.any", None).unwrap();
         let mut time_pat = engine.compile("time.any", None).unwrap();
-        let date_raw_match_result = date_pat.raw_match(1, "Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
-        let time_raw_match_result = time_pat.raw_match(1, "2:21 am", &MatchEncoder::JSONPretty).unwrap();
+        let date_raw_match_result = date_pat.raw_match(1, b"Saturday, Nov 5, 1955", &MatchEncoder::JSONPretty).unwrap();
+        let time_raw_match_result = time_pat.raw_match(1, b"2:21 am", &MatchEncoder::JSONPretty).unwrap();
         assert!(date_raw_match_result.as_str() != time_raw_match_result.as_str());
         //NOTE: I know these checks might break with perfectly legal changes to JSON formatting, but at least they
         // will flag it, so a human can take a look and ensure something more fundamental didn't break.
