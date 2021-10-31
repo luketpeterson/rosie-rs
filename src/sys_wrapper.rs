@@ -379,7 +379,7 @@ impl RosieEngine {
     /// the [MatchResult] and [RawMatchResult] structures.
     /// 
     /// **NOTE**: Usually, the returned [RosieMessage] will match the `pkg_name` argument, but this will not always be the case.
-    /// This method searches all directories that are part of the engine's `lib_path` (set using [lib_path](RosieEngine::lib_path)),
+    /// This method searches all directories that are part of the engine's `lib_path` (set using [lib_paths](RosieEngine::lib_paths)),
     /// searching for files named '`pkg_name.rpl`'.  When it finds the relevant `.rpl` file, the file is loaded and parsed,
     /// and the package name from the package's `package` declaration is returned.  It is a best practice for the filename to match the
     /// `package` declaration, but it is not enforced or required.

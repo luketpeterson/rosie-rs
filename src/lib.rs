@@ -631,7 +631,7 @@ impl <'a>MatchResult<'a> {
     /// Returns the subset of the input that was matched by the pattern as an &str
     /// 
     /// NOTE: This may panic if the matched data includes part but not all of a unicode character.
-    /// Use [try_matched_str] for a non-panicking alternative
+    /// Use [try_matched_str](Self::try_matched_str) for a non-panicking alternative
     pub fn matched_str(&self) -> &str {
         self.try_matched_str().unwrap()
     }
