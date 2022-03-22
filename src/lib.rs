@@ -68,6 +68,23 @@ pub mod engine {
     pub use crate::sys_wrapper::RosieEngine;
 }
 
+/// Alternative Rosie entry points that support sharing between threads
+/// 
+/// [RosieEngine]s and compiled [Pattern]s can't be accessed by other threads, so this module
+/// implements versions that can, but the tradeoff is runtime performance costs due to locking
+/// and copying the results to private buffers
+/// 
+/// NOTE: I feel like this is a short-term solution.  Longer term, I envision a RosieEngine
+/// being separated into two objects; a compiler and a matching engine.  Then the matching engine
+/// could be fully reentrant and lock-free, and new compiled patterns could be added atomically
+/// to a matching engine, obviating the need for everything in the `thread_portable` module.
+/// 
+/// I'd like to discuss this direction with Jamie, and possibly even an implementation of the
+/// matching engine in safe Rust.
+pub mod thread_portable;
+
+use thread_portable::PortablePattern;
+
 //The number of compiled patterns in the pattern cache
 const PATTERN_CACHE_SIZE: usize = 8;
 
@@ -135,6 +152,10 @@ impl RosieMessage {
         let rosie_string = unsafe { rosie_new_string(s.as_ptr(), s.len()) };
         Self(rosie_string)
     }
+    pub fn from_bytes(b: &[u8]) -> Self {
+        let rosie_string = unsafe { rosie_new_string(b.as_ptr(), b.len()) };
+        Self(rosie_string)
+    }
     /// Returns `true` if the RosieMessage contains text.  Returns `false` if it is empty.
     pub fn is_valid(&self) -> bool {
         self.0.is_valid()
@@ -164,7 +185,7 @@ impl Display for RosieMessage {
 }
 
 /// The interface to top-level rosie functionality
-pub struct Rosie ();
+pub struct Rosie;
 
 impl Rosie {
     /// Matches the specified `expression` in the specified `input` bytes.
@@ -294,6 +315,7 @@ impl Rosie {
 /// Implemented for types that can be returned by a match operation
 pub trait MatchOutput<'a> : Sized {
     fn match_bytes(pat : &Pattern, input : &'a [u8]) -> Result<Self, RosieError>;
+    fn match_bytes_portable(pat : &PortablePattern, input : &'a [u8]) -> Result<Self, RosieError>;
 }
 
 impl MatchOutput<'_> for bool {
@@ -301,7 +323,12 @@ impl MatchOutput<'_> for bool {
         //NOTE: we're calling directly into the engine because we want to bypass the requirement for a &mut self in Pattern::raw_match.
         // That &mut is just there to ensure we have an exclusive borrow, so subsequent calls don't match the same compiled pattern and
         // collide with the pattern's buffer in the engine.
-        let raw_match_result = pat.engine.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
+        let raw_match_result = pat.engine.0.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
+        Ok(raw_match_result.did_match())
+    }
+    fn match_bytes_portable(pat : &PortablePattern, input : &[u8]) -> Result<Self, RosieError> {
+        let guard = pat.engine.0.lock().unwrap();
+        let raw_match_result = guard.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
         Ok(raw_match_result.did_match())
     }
 }
@@ -324,7 +351,10 @@ impl MatchOutput<'_> for bool {
 
 impl <'a>MatchOutput<'a> for MatchResult<'a> {
     fn match_bytes(pat : &Pattern, input : &'a [u8]) -> Result<Self, RosieError> {
-        pat.engine.match_pattern(pat.id, 1, input)
+        pat.engine.0.match_pattern(pat.id, 1, input)
+    }
+    fn match_bytes_portable(pat : &PortablePattern, input : &'a [u8]) -> Result<Self, RosieError> {
+        pat.engine.0.lock().unwrap().match_pattern(pat.id, 1, input)
     }
 }
 
@@ -387,7 +417,7 @@ pub struct Pattern {
 
 impl Drop for Pattern {
     fn drop(&mut self) {
-        unsafe { rosie_free_rplx(self.engine.ptr(), self.id) };
+        unsafe { rosie_free_rplx(self.engine.0.0, self.id) };
     }
 }
 
@@ -455,7 +485,7 @@ impl Pattern {
     /// ```
     /// 
     pub fn raw_match<'pat>(&'pat mut self, start : usize, input : &[u8], encoder : &MatchEncoder) -> Result<RawMatchResult<'pat>, RosieError> {
-        self.engine.match_pattern_raw(self.id, start, input, encoder)
+        self.engine.0.match_pattern_raw(self.id, start, input, encoder)
     }
 
     /// Traces a pattern match, providing information useful for debugging the pattern expression.
@@ -478,7 +508,7 @@ impl Pattern {
     /// ```
     ///
     pub fn trace(&self, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
-        self.engine.trace_pattern(self.id, start, input, format, trace)
+        self.engine.0.trace_pattern(self.id, start, input, format, trace)
     }
 }
 
