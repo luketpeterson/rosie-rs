@@ -340,7 +340,7 @@ impl RawEngine {
     // Returns a RawMatchResult, which contains a pointer into the engine that is accociated with the specific pattern_id
     pub(crate) fn match_pattern_raw<'engine>(&'engine self, pattern_id : i32, start : usize, input : &[u8], encoder : &MatchEncoder) -> Result<RawMatchResult<'engine>, RosieError> {
 
-        if start < 1 || start > input.len() {
+        if start < 1 || start > input.len()+1 {
             return Err(RosieError::ArgError);
         }
 
@@ -360,7 +360,7 @@ impl RawEngine {
     // Executes the rosie_trace function.  All results are self-contained.
     pub(crate) fn trace_pattern(&self, pattern_id : i32, start : usize, input : &str, format : TraceFormat, trace : &mut RosieMessage) -> Result<bool, RosieError> {
 
-        if start < 1 || start > input.len() {
+        if start < 1 || start > input.len()+1 {
             return Err(RosieError::ArgError);
         }
         
