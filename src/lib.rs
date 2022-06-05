@@ -196,7 +196,7 @@ impl Rosie {
     /// 
     /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
-    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
+    /// [Status](MatchEncoder::Status) encoder and bypass a lot of overhead formatting the results.
     pub fn match_bytes<'input, T>(expression : &str, input : &'input [u8]) -> T 
     where T : MatchOutput<'input> {
         THREAD_LOCALS.with(|locals_cell| {
@@ -236,7 +236,7 @@ impl Rosie {
     /// 
     /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
-    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
+    /// [Status](MatchEncoder::Status) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input, T>(expression : &str, input : &'input str) -> T 
     where T : MatchOutput<'input> {
         Self::match_bytes(expression, input.as_bytes())
@@ -323,12 +323,12 @@ impl MatchOutput<'_> for bool {
         //NOTE: we're calling directly into the engine because we want to bypass the requirement for a &mut self in Pattern::raw_match.
         // That &mut is just there to ensure we have an exclusive borrow, so subsequent calls don't match the same compiled pattern and
         // collide with the pattern's buffer in the engine.
-        let raw_match_result = pat.engine.0.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
+        let raw_match_result = pat.engine.0.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Status).unwrap();
         Ok(raw_match_result.did_match())
     }
     fn match_bytes_portable(pat : &PortablePattern, input : &[u8]) -> Result<Self, RosieError> {
         let guard = pat.engine.0.lock().unwrap();
-        let raw_match_result = guard.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Bool).unwrap();
+        let raw_match_result = guard.match_pattern_raw(pat.id, 1, input, &MatchEncoder::Status).unwrap();
         Ok(raw_match_result.did_match())
     }
 }
@@ -429,7 +429,7 @@ impl Pattern {
     /// 
     /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
-    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
+    /// [Status](MatchEncoder::Status) encoder and bypass a lot of overhead formatting the results.
     pub fn match_bytes<'input, T>(&self, input : &'input [u8]) -> Result<T, RosieError> 
     where T : MatchOutput<'input> {
         //Call the return-type-specific match call
@@ -442,7 +442,7 @@ impl Pattern {
     /// 
     /// NOTE: This method may return several different return types, including [bool], and [MatchResult].
     /// If you need the fastest possible performance calling this method to return a [bool] will use the
-    /// [Bool](MatchEncoder::Bool) encoder and bypass a lot of overhead formatting the results.
+    /// [Status](MatchEncoder::Status) encoder and bypass a lot of overhead formatting the results.
     pub fn match_str<'input, T>(&self, input : &'input str) -> Result<T, RosieError> 
     where T : MatchOutput<'input> {
         self.match_bytes(input.as_bytes())
@@ -816,7 +816,7 @@ mod tests {
 
         //Recompile a pattern expression and match it against a matching input using match_pattern_raw
         let mut pat = engine.compile("{[012][0-9]}", None).unwrap();
-        let raw_match_result = pat.raw_match(1, b"21", &MatchEncoder::Bool).unwrap();
+        let raw_match_result = pat.raw_match(1, b"21", &MatchEncoder::Status).unwrap();
         //Validate that we can't access the pattern while our raw_match_result is in use.
         //TODO: Implement a TryBuild harness in order to ensure the two lines below will not compile together, although each will compile separately.
         // assert!(!pat.match_str::<bool>("35").unwrap());
